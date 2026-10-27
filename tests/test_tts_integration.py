@@ -4,6 +4,7 @@ from pathlib import Path
 from jllm.kernel import Kernel, discover, load_profile, resolve
 
 PROFILE = Path(__file__).resolve().parents[1] / "profiles" / "tts-voicevox.yaml"
+OPENAI_PROFILE = Path(__file__).resolve().parents[1] / "profiles" / "tts-openai.yaml"
 
 
 class TTSIntegrationTests(unittest.IsolatedAsyncioTestCase):
@@ -19,6 +20,22 @@ class TTSIntegrationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await kernel.stop()
         self.assertTrue(provider.services["tts.provider"].session.closed)
+
+    async def test_openai_config_is_bound_without_network(self):
+        plan = resolve(load_profile(OPENAI_PROFILE), discover())
+        kernel = Kernel(plan)
+        try:
+            await kernel.start()
+            provider = plan.nodes["provider.tts.openai/drama3"]
+            backend = provider.services["tts.provider"]
+            self.assertIs(plan.nodes["tts.direct/main"].services["tts.synthesis"], backend)
+            self.assertEqual(backend.default_voice, "test")
+            self.assertEqual(backend.model_name, "drama3-small")
+            self.assertEqual(backend.seed, 1234)
+            self.assertTrue(backend.ignore_speaker_speed)
+        finally:
+            await kernel.stop()
+        self.assertTrue(backend.session.closed)
 
 
 if __name__ == "__main__":

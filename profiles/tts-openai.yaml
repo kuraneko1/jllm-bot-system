@@ -1,0 +1,17 @@
+profile: tts-openai
+plugins:
+  provider.tts.openai:
+    enabled: true
+    instances:
+      drama3:
+        url: http://127.0.0.1:8090
+        voice: test
+        model: drama3-small
+        default_speed: 1.0
+        ignore_speaker_speed: true
+        seed: 1234
+  tts.direct:
+    enabled: true
+bindings:
+  tts.direct:
+    tts.provider: provider.tts.openai/drama3

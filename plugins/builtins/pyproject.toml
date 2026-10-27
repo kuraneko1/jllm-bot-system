@@ -22,6 +22,7 @@ jllm-tts-contract = { workspace = true }
 "feature.wavrank" = "jllm_plugins.wavrank:plugin.json"
 "provider.tts.voicevox" = "jllm_plugins.tts_voicevox:plugin.json"
 "tts.direct" = "jllm_plugins.tts_direct:plugin.json"
+"provider.tts.openai" = "jllm_plugins.tts_openai:plugin.json"
 
 [build-system]
 requires = ["hatchling"]

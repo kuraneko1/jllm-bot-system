@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "url": {"type": "string", "default": "http://127.0.0.1:8090", "minLength": 1},
+    "voice": {"type": "string", "default": ""},
+    "voices": {"type": "string", "default": ""},
+    "voices_path": {"type": "string", "default": "/v1/audio/voices"},
+    "health_path": {"type": "string", "default": "/health"},
+    "model": {"type": "string", "default": ""},
+    "speed_mode": {"type": "string", "enum": ["atempo", "server", "fixed"], "default": "atempo"},
+    "default_speed": {"type": "number", "default": 1.0, "exclusiveMinimum": 0},
+    "ignore_speaker_speed": {"type": "boolean", "default": false},
+    "seed": {"type": ["integer", "null"], "default": null},
+    "silence_retries": {"type": "integer", "default": 1, "minimum": 0},
+    "silence_rms_dbfs": {"type": "number", "default": -45.0},
+    "timeout": {"type": "number", "default": 120.0, "exclusiveMinimum": 0},
+    "streaming": {"type": "boolean", "default": true}
+  },
+  "additionalProperties": false
+}
