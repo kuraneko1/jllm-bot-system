@@ -1,0 +1,43 @@
+profile: reader
+plugins:
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  policy.restrictions:
+    enabled: true
+  adapter.discord:
+    enabled: true
+    critical: true
+    config:
+      token_env: DISCORD_TOKEN
+  provider.tts.voicevox:
+    enabled: true
+    instances:
+      local:
+        url: http://127.0.0.1:50021
+  tts.direct:
+    enabled: true
+  dictionary.sound:
+    enabled: true
+  dictionary.reading:
+    enabled: true
+  speech.effects:
+    enabled: true
+  speech.playback:
+    enabled: true
+  voice.settings:
+    enabled: true
+  feature.reader:
+    enabled: true
+    config:
+      allowed_channel_ids: []
+      global_reaction_words: []
+      default_speed: 1.2
+      max_message_length: 200
+      vc_announcement_enabled: true
+      wav_enabled: true
+      read_mode: tts
+bindings:
+  tts.direct:
+    tts.provider: provider.tts.voicevox/local

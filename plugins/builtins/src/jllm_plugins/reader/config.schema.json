@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "allowed_channel_ids": {"type": "array", "items": {"type": "integer"}, "default": []},
+    "global_reaction_words": {"type": "array", "items": {"type": "string"}, "default": []},
+    "default_speed": {"type": "number", "default": 1.2, "exclusiveMinimum": 0},
+    "max_message_length": {"type": "integer", "default": 200, "minimum": 1},
+    "vc_announcement_enabled": {"type": "boolean", "default": true},
+    "vc_announcement_cooldown_seconds": {"type": "integer", "default": 3600, "minimum": 0},
+    "wav_enabled": {"type": "boolean", "default": true},
+    "read_mode": {"type": "string", "enum": ["tts", "wav"], "default": "tts"},
+    "duck_enabled": {"type": "boolean", "default": false}
+  },
+  "additionalProperties": false
+}

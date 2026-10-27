@@ -59,6 +59,9 @@ class VoiceSettings:
         self.forced_voices = JsonMap(
             storage.legacy_path(config.get("forced_voices_path", "forced_voices.json"))
         )
+        self.voice_entries = JsonMap(
+            storage.legacy_path(config.get("announcement_history_path", "vc_announcements.json"))
+        )
         self.join_cache = JoinVoiceCache(
             storage.legacy_path(config.get("announcement_cache_dir", "join_voice")),
             voice=config.get("announcement_voice", "clone こしあん"),

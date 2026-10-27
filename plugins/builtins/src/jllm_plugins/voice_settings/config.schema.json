@@ -5,6 +5,7 @@
     "volumes_path": {"type": "string", "default": "voice_volumes.json", "minLength": 1},
     "user_voices_path": {"type": "string", "default": "user_voices.json", "minLength": 1},
     "forced_voices_path": {"type": "string", "default": "forced_voices.json", "minLength": 1},
+    "announcement_history_path": {"type": "string", "default": "vc_announcements.json", "minLength": 1},
     "announcement_cache_dir": {"type": "string", "default": "join_voice", "minLength": 1},
     "announcement_voice": {"type": "string", "default": "clone こしあん", "minLength": 1},
     "announcement_cache_limit": {"type": "integer", "default": 500, "minimum": 10}
