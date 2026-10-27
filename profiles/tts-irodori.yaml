@@ -1,0 +1,18 @@
+profile: tts-irodori
+plugins:
+  provider.tts.irodori:
+    enabled: true
+    instances:
+      home:
+        url: http://127.0.0.1:8088
+        voice: none
+        model: irodori-tts
+        data_dir: data
+        streaming: true
+        chunk_min_chars: 80
+        first_chunk_min_chars: 12
+  tts.direct:
+    enabled: true
+bindings:
+  tts.direct:
+    tts.provider: provider.tts.irodori/home

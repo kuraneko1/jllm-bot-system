@@ -1,11 +1,14 @@
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from jllm.kernel import Kernel, discover, load_profile, resolve
 
 PROFILE = Path(__file__).resolve().parents[1] / "profiles" / "tts-voicevox.yaml"
 OPENAI_PROFILE = Path(__file__).resolve().parents[1] / "profiles" / "tts-openai.yaml"
 SPEECHCPP_PROFILE = Path(__file__).resolve().parents[1] / "profiles" / "tts-speechcpp.yaml"
+IRODORI_PROFILE = Path(__file__).resolve().parents[1] / "profiles" / "tts-irodori.yaml"
 
 
 class TTSIntegrationTests(unittest.IsolatedAsyncioTestCase):
@@ -52,6 +55,29 @@ class TTSIntegrationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await kernel.stop()
         self.assertTrue(backend.session.closed)
+
+    async def test_irodori_config_and_secret_env_are_bound(self):
+        with tempfile.TemporaryDirectory() as temp:
+            profile = load_profile(IRODORI_PROFILE)
+            profile.plugins["provider.tts.irodori"]["instances"]["home"]["data_dir"] = temp
+            plan = resolve(profile, discover())
+            kernel = Kernel(plan)
+            with patch.dict("os.environ", {"IRODORI_API_KEY": "secret"}, clear=True):
+                try:
+                    await kernel.start()
+                    provider = plan.nodes["provider.tts.irodori/home"]
+                    backend = provider.services["tts.provider"]
+                    self.assertIs(plan.nodes["tts.direct/main"].services["tts.synthesis"], backend)
+                    self.assertEqual(backend.default_voice, "none")
+                    self.assertEqual(backend.api_key, "secret")
+                    self.assertEqual(
+                        backend.disabled_voices_path, Path(temp) / "disabled_voices.json"
+                    )
+                    self.assertEqual(backend.chunk_min_chars, 80)
+                    self.assertEqual(backend.first_chunk_min_chars, 12)
+                finally:
+                    await kernel.stop()
+            self.assertTrue(backend.session.closed)
 
 
 if __name__ == "__main__":

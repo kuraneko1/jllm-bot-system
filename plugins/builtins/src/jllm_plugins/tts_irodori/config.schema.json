@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "url": {"type": "string", "default": "http://127.0.0.1:8088", "minLength": 1},
+    "voice": {"type": "string", "default": "none"},
+    "caption": {"type": "string", "default": ""},
+    "api_key_env": {"type": "string", "default": "IRODORI_API_KEY", "minLength": 1},
+    "model": {"type": "string", "default": "irodori-tts"},
+    "voice_order": {"type": "array", "items": {"type": "string"}, "default": []},
+    "data_dir": {"type": "string", "default": "data", "minLength": 1},
+    "lora_map_file": {"type": "string"},
+    "voices_cache": {"type": "string"},
+    "disabled_voices_path": {"type": "string"},
+    "streaming": {"type": "boolean", "default": true},
+    "chunk_min_chars": {"type": "integer", "default": 80, "minimum": 1},
+    "first_chunk_min_chars": {"type": "integer", "default": 12, "minimum": 1},
+    "timeout": {"type": "number", "default": 120.0, "exclusiveMinimum": 0}
+  },
+  "additionalProperties": false
+}
