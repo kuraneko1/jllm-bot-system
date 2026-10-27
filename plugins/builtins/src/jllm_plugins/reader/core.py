@@ -15,6 +15,8 @@ from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
 from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
 
+from .panels import MyTalkView, RestrictView
+
 logger = logging.getLogger(__name__)
 URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 CUSTOM_EMOJI_PATTERN = re.compile(r"<a?:[A-Za-z0-9_]+:\d+>")
@@ -123,6 +125,8 @@ class ReaderConfig:
     wav_enabled: bool = True
     read_mode: str = "tts"
     duck_enabled: bool = False
+    owner_id: int = 0
+    default_speaker: int = 1
 
     def channel_allowed(self, channel_id: int) -> bool:
         return not self.allowed_channel_ids or channel_id in self.allowed_channel_ids
@@ -143,6 +147,13 @@ class ReaderCog(commands.Cog):
         self.players: dict[int, SpeechPlayer] = {}
         self.voice_entries = settings.voice_entries.entries
         self.toggles = {"wav": config.wav_enabled}
+
+    @property
+    def user_voices(self):
+        return self.settings.user_voices.entries
+
+    def _save_user_voices(self):
+        self.settings.user_voices.save()
 
     @staticmethod
     def _user_key(guild_id: int, user_id: int) -> str:
@@ -173,6 +184,109 @@ class ReaderCog(commands.Cog):
 
     async def tts_gain_for(self, speaker):
         return self.settings.volumes.get(str(speaker))
+
+    def _mytalk_embed(self, guild_id: int, user_id: int, speakers):
+        key = self._user_key(guild_id, user_id)
+        player = self.players.get(guild_id)
+        voice_name = self.user_voices.get(key)
+        default_id = player.speaker_id if player is not None else self.config.default_speaker
+        default_name = next(
+            (name for speaker_id, name in speakers if speaker_id == default_id),
+            f"ID {default_id}",
+        )
+        embed = discord.Embed(
+            title="🎙️ あなたの読み上げ設定",
+            colour=discord.Colour.blurple(),
+        )
+        embed.add_field(
+            name="声（話者）",
+            value=voice_name or f"サーバー既定（{default_name}）",
+            inline=False,
+        )
+        if player is None:
+            playback_value = "読み上げが開始されていません（先に /join）"
+        elif user_id in player.skip_users:
+            playback_value = (
+                "🔇 あなたの投稿は読み上げられていません\n"
+                "ボイスチャンネルを出ると自動で解除されます"
+            )
+        else:
+            playback_value = "✅ 読み上げられています"
+        embed.add_field(name="あなたの投稿", value=playback_value, inline=False)
+        embed.set_footer(
+            text="声を選んで ✅設定する で確定。このパネルは一回限り（次は /mytalk を開き直し）"
+        )
+        return embed
+
+    @app_commands.command(
+        name="mytalk",
+        description="自分の読み上げ設定（声 / 自分の投稿を読み上げない）をパネルで変更",
+    )
+    @app_commands.guild_only()
+    async def mytalk(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        if guild is None:
+            return
+        await interaction.response.defer(ephemeral=True)
+        speakers = await self._flatten_speakers()
+        view = MyTalkView(self, guild_id=guild.id, user_id=interaction.user.id, speakers=speakers)
+        message = await interaction.followup.send(
+            embed=self._mytalk_embed(guild.id, interaction.user.id, speakers),
+            view=view,
+            ephemeral=True,
+        )
+        view.message = message
+
+    @app_commands.command(
+        name="resettalk", description="このサーバーの全員の話者設定をリセットします"
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.guild_only()
+    async def resettalk(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        if guild is None:
+            return
+        member = interaction.user
+        if not (isinstance(member, discord.Member) and member.guild_permissions.manage_guild):
+            await interaction.response.send_message("サーバー管理権限が必要です。", ephemeral=True)
+            return
+        prefix = f"{guild.id}:"
+        removed = [key for key in self.user_voices if key.startswith(prefix)]
+        for key in removed:
+            del self.user_voices[key]
+        if removed:
+            self._save_user_voices()
+        player = self.players.get(guild.id)
+        if player is not None:
+            player.speaker_id = self.config.default_speaker
+        await interaction.response.send_message(
+            f"全員の話者設定をリセットしました（{len(removed)}件）。",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="restrict",
+        description="特定のユーザーのwav/GIF再生や、まるごと無視を設定します（オーナーのみ）",
+    )
+    @app_commands.guild_only()
+    async def restrict(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        if guild is None:
+            return
+        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+            await interaction.response.send_message(
+                "このコマンドはオーナーだけが使えます。", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        view = RestrictView(self, guild_id=guild.id, owner_id=interaction.user.id)
+        message = await interaction.followup.send(
+            embed=view.embed(),
+            view=view,
+            ephemeral=True,
+            wait=True,
+        )
+        view.message = message
 
     @app_commands.command(name="join", description="ボイスチャンネルに参加して読み上げを開始します")
     @app_commands.guild_only()
@@ -496,6 +610,8 @@ class Plugin:
             wav_enabled=ctx.config.get("wav_enabled", True),
             read_mode=ctx.config.get("read_mode", "tts"),
             duck_enabled=ctx.config.get("duck_enabled", False),
+            owner_id=ctx.config.get("owner_id", 0),
+            default_speaker=ctx.config.get("default_speaker", 1),
         )
         self.cog = ReaderCog(
             ctx.dependencies["discord.gateway"].bot,

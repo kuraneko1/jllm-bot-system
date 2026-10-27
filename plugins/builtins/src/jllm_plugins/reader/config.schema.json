@@ -9,7 +9,9 @@
     "vc_announcement_cooldown_seconds": {"type": "integer", "default": 3600, "minimum": 0},
     "wav_enabled": {"type": "boolean", "default": true},
     "read_mode": {"type": "string", "enum": ["tts", "wav"], "default": "tts"},
-    "duck_enabled": {"type": "boolean", "default": false}
+    "duck_enabled": {"type": "boolean", "default": false},
+    "owner_id": {"type": "integer", "default": 0, "minimum": 0},
+    "default_speaker": {"type": "integer", "default": 1}
   },
   "additionalProperties": false
 }
