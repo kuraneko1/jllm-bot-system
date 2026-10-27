@@ -1,0 +1,22 @@
+profile: minimal
+plugins:
+  fake.provider:
+    enabled: true
+    instances:
+      first:
+        prefix: "first: "
+      second:
+        prefix: "second: "
+  fake.router:
+    enabled: true
+  fake.consumer:
+    enabled: true
+    config:
+      message: hello
+bindings:
+  fake.router:
+    fake.provider:
+      - fake.provider/first
+      - fake.provider/second
+  fake.consumer:
+    fake.routed: fake.router/main

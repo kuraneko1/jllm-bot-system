@@ -3,7 +3,7 @@
 JLLM Bot System は、Discord Bot「jllm-voice」を全面再設計するプロジェクトです。DeepSeek Harness / Cordis の設計思想を取り入れ、主要機能を profile から着脱・交換できるプラグインとして実装します。
 
 > [!NOTE]
-> 現在は移行の初期段階です。プラグイン kernel と検証用 plugin を先行して整備しており、旧 jllm-voice の Discord 機能はまだ移行されていません。
+> 現在は Phase 1 です。plugin discovery、capability binding、設定検証、lifecycle、CLI、検証用 fake plugin を実装しています。旧 jllm-voice の Discord 機能はまだ移行されていません。
 
 ## 設計の要点
 
@@ -21,9 +21,15 @@ JLLM Bot System は、Discord Bot「jllm-voice」を全面再設計するプロ�
 - [uv](https://docs.astral.sh/uv/)
 
 ```bash
-uv sync
+uv sync --all-packages
 uv run python -m unittest discover -s tests -v
+uv run python -m unittest discover -s plugins/builtins/tests -v
+uv run jllm plugins list
+uv run jllm config validate --profile profiles/minimal.yaml
+uv run jllm doctor --profile profiles/minimal.yaml
 ```
+
+CLI は plugin・profile・依存関係の検査用です。Discord Bot を起動するものではありません。
 
 ## 秘密情報と実行データ
 
@@ -39,11 +45,17 @@ cp .env.example .env
 - 音声、参照音声、画像生成物、モデル、フォント
 - 会話 log、SQLite、export、ユーザー設定、そのほかの実行データ
 
-意図しないファイルが追跡対象になっていないかは `git status --ignored` で確認できます。
+意図しないファイルが追跡対象になっていないかは `git status --ignored` で確認できます。追跡対象の機械検査には次を使用します。
+
+```bash
+uv run python tools/check-repository.py
+```
 
 ## ドキュメント
 
 - [全体再設計書](PLUGIN_ARCHITECTURE.md)
+- [プラグイン開発ガイド](docs/plugin-development.md)
+- [開発参加ガイド](CONTRIBUTING.md)
 - [セキュリティ方針](SECURITY.md)
 
 ## ライセンス

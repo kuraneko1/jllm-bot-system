@@ -1,0 +1,23 @@
+{
+  "id": "fake.router",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.fake_router.plugin:Plugin",
+  "provides": [
+    {
+      "capability": "fake.routed",
+      "version": 1
+    }
+  ],
+  "requires": [
+    {
+      "capability": "fake.provider",
+      "version": 1,
+      "cardinality": "many"
+    }
+  ],
+  "optional": [],
+  "permissions": [],
+  "config_schema": "config.schema.json",
+  "multi_instance": false
+}
