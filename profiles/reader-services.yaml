@@ -1,0 +1,12 @@
+profile: reader-services
+plugins:
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  voice.settings:
+    enabled: true
+  speech.text:
+    enabled: true
+  feature.bookmarks:
+    enabled: true

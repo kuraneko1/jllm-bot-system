@@ -31,6 +31,9 @@ jllm-tts-contract = { workspace = true }
 "dictionary.reading" = "jllm_plugins.dictionaries:reading_plugin.json"
 "speech.effects" = "jllm_plugins.audio_effects:plugin.json"
 "speech.playback" = "jllm_plugins.playback:plugin.json"
+"voice.settings" = "jllm_plugins.voice_settings:plugin.json"
+"speech.text" = "jllm_plugins.speech_text:plugin.json"
+"feature.bookmarks" = "jllm_plugins.bookmarks:plugin.json"
 
 [build-system]
 requires = ["hatchling"]

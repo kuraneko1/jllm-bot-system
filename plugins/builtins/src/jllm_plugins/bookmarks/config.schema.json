@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "data_file": {"type": "string", "default": "bookmarks.json", "minLength": 1},
+    "max_items": {"type": "integer", "default": 500, "minimum": 1}
+  },
+  "additionalProperties": false
+}

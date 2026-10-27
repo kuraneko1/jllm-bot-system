@@ -1,0 +1,12 @@
+{
+  "id": "speech.text",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.speech_text.plugin:Plugin",
+  "provides": [{"capability": "speech.text", "version": 1}],
+  "requires": [],
+  "optional": [],
+  "permissions": [],
+  "config_schema": {},
+  "multi_instance": false
+}

@@ -1,0 +1,12 @@
+{
+  "id": "voice.settings",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.voice_settings.settings:Plugin",
+  "provides": [{"capability": "voice.settings", "version": 1}],
+  "requires": [{"capability": "storage.local", "version": 1, "cardinality": "one"}],
+  "optional": [],
+  "permissions": ["storage.own"],
+  "config_schema": "config.schema.json",
+  "multi_instance": false
+}
