@@ -28,6 +28,8 @@ plugins:
     enabled: true
   voice.settings:
     enabled: true
+  feature.bookmarks:
+    enabled: true
   feature.reader:
     enabled: true
     config:

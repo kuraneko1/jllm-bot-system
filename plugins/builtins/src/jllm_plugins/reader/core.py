@@ -3,6 +3,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import discord
@@ -10,12 +11,19 @@ from discord import app_commands
 from discord.ext import commands
 from jllm_tts import TTSBackendError
 
+from jllm_plugins.bookmarks import (
+    emoji_display,
+    emoji_matches,
+    excerpt,
+    jump_url,
+    parse_emoji_spec,
+)
 from jllm_plugins.ducking import VOICE_RECV_AVAILABLE, voice_recv
 from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
 from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
 
-from .panels import MyTalkView, RestrictView
+from .panels import BookmarkView, ForceVoiceView, MyTalkView, RestrictView
 
 logger = logging.getLogger(__name__)
 URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -127,6 +135,8 @@ class ReaderConfig:
     duck_enabled: bool = False
     owner_id: int = 0
     default_speaker: int = 1
+    bookmark_reaction: str = ""
+    bookmark_notify: bool = True
 
     def channel_allowed(self, channel_id: int) -> bool:
         return not self.allowed_channel_ids or channel_id in self.allowed_channel_ids
@@ -134,7 +144,16 @@ class ReaderConfig:
 
 class ReaderCog(commands.Cog):
     def __init__(
-        self, bot, tts, player_factory, settings, dictionary, readings, restrictions, config
+        self,
+        bot,
+        tts,
+        player_factory,
+        settings,
+        dictionary,
+        readings,
+        restrictions,
+        config,
+        bookmarks=None,
     ):
         self.bot = bot
         self.tts = tts
@@ -144,6 +163,8 @@ class ReaderCog(commands.Cog):
         self.readings = readings
         self.restrictions = restrictions
         self.config = config
+        self.bookmarks = bookmarks
+        self.bookmark_rules = parse_emoji_spec(config.bookmark_reaction)
         self.players: dict[int, SpeechPlayer] = {}
         self.voice_entries = settings.voice_entries.entries
         self.toggles = {"wav": config.wav_enabled}
@@ -154,6 +175,13 @@ class ReaderCog(commands.Cog):
 
     def _save_user_voices(self):
         self.settings.user_voices.save()
+
+    @property
+    def forced_voices(self):
+        return self.settings.forced_voices.entries
+
+    def _save_forced_voices(self):
+        self.settings.forced_voices.save()
 
     @staticmethod
     def _user_key(guild_id: int, user_id: int) -> str:
@@ -234,6 +262,65 @@ class ReaderCog(commands.Cog):
             embed=self._mytalk_embed(guild.id, interaction.user.id, speakers),
             view=view,
             ephemeral=True,
+        )
+        view.message = message
+
+    @app_commands.command(
+        name="forcevoice", description="メンバーの声を強制変更します（オーナーのみ）"
+    )
+    @app_commands.guild_only()
+    async def forcevoice(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        if guild is None:
+            return
+        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+            await interaction.response.send_message(
+                "このコマンドはオーナーだけが使えます。", ephemeral=True
+            )
+            return
+        members = [
+            member
+            for channel in (*guild.voice_channels, *getattr(guild, "stage_channels", []))
+            for member in channel.members
+            if not member.bot
+        ]
+        known = {member.id for member in members}
+        channel = getattr(interaction, "channel", None)
+        if channel is not None:
+            try:
+                async for message in channel.history(limit=20):
+                    author = getattr(message, "author", None)
+                    if (
+                        author is None
+                        or getattr(author, "bot", False)
+                        or getattr(message, "webhook_id", None)
+                        or author.id in known
+                    ):
+                        continue
+                    members.append(author)
+                    known.add(author.id)
+            except discord.HTTPException, AttributeError:
+                logger.warning("forcevoiceの直近投稿者を取得できません")
+        if not members:
+            await interaction.response.send_message(
+                "VC参加者も直近の投稿者もいません。", ephemeral=True
+            )
+            return
+        speakers = await self._flatten_speakers()
+        if not speakers:
+            await interaction.response.send_message(
+                "TTSの話者一覧を取得できません。接続設定を確認してください。", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        view = ForceVoiceView(
+            self, guild_id=guild.id, owner_id=interaction.user.id, speakers=speakers
+        )
+        message = await interaction.followup.send(
+            embed=view.embed(),
+            view=view,
+            ephemeral=True,
+            wait=True,
         )
         view.message = message
 
@@ -572,6 +659,126 @@ class ReaderCog(commands.Cog):
         else:
             player.enqueue(text, self.settings.join_cache.voice, speed=speed, volume=volume)
 
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload):
+        if self._is_bookmark_reaction(payload):
+            await self._add_bookmark(payload)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload):
+        if self._is_bookmark_reaction(payload):
+            self.bookmarks.remove(payload.user_id, payload.message_id)
+
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload):
+        if self.bookmark_rules:
+            self.bookmarks.remove_message(payload.message_id)
+
+    def _is_bookmark_reaction(self, payload) -> bool:
+        if (
+            not self.bookmark_rules
+            or not self.config.owner_id
+            or payload.user_id != self.config.owner_id
+        ):
+            return False
+        if payload.guild_id is None:
+            return False
+        return emoji_matches(payload.emoji, self.bookmark_rules)
+
+    async def _add_bookmark(self, payload):
+        channel = self.bot.get_channel(payload.channel_id) or await self._fetch_channel(
+            payload.channel_id
+        )
+        if channel is None:
+            return
+        message = await self._fetch_message(channel, payload.message_id)
+        excerpt_text = ""
+        if message is not None:
+            excerpt_text = excerpt(message.content)
+            if not excerpt_text:
+                if message.attachments:
+                    excerpt_text = "（添付ファイル）"
+                elif message.embeds:
+                    excerpt_text = "（埋め込み）"
+                else:
+                    excerpt_text = "（本文なし）"
+        author = ""
+        if message is not None and message.author is not None:
+            author = getattr(message.author, "display_name", None) or message.author.name
+        item = {
+            "message_id": str(payload.message_id),
+            "channel_id": str(payload.channel_id),
+            "guild_id": str(payload.guild_id),
+            "channel": getattr(channel, "name", "") or "",
+            "author": author,
+            "excerpt": excerpt_text,
+            "added_at": datetime.now(UTC).isoformat(),
+        }
+        count = self.bookmarks.add(payload.user_id, self._bookmark_user_name(payload), item)
+        if not self.config.bookmark_notify:
+            return
+        user = self.bot.get_user(payload.user_id) or await self._fetch_user(payload.user_id)
+        if user is None:
+            return
+        try:
+            await user.send(f"{payload.emoji} 保存しました（{count}件）\n{jump_url(item)}")
+        except discord.HTTPException:
+            logger.info("ブックマークのDM通知を送れませんでした: %s", payload.user_id)
+
+    def _bookmark_user_name(self, payload) -> str:
+        member = getattr(payload, "member", None)
+        if member is not None:
+            return getattr(member, "display_name", None) or member.name
+        user = self.bot.get_user(payload.user_id)
+        return getattr(user, "display_name", "") if user else ""
+
+    async def _fetch_channel(self, channel_id: int):
+        try:
+            return await self.bot.fetch_channel(channel_id)
+        except discord.HTTPException, discord.NotFound:
+            logger.info("ブックマーク対象のチャンネルを取得できません: %s", channel_id)
+            return None
+
+    async def _fetch_message(self, channel, message_id: int):
+        try:
+            return await channel.fetch_message(message_id)
+        except discord.HTTPException, discord.NotFound:
+            logger.info("ブックマーク対象の本文を取得できません: %s", message_id)
+            return None
+
+    async def _fetch_user(self, user_id: int):
+        try:
+            return await self.bot.fetch_user(user_id)
+        except discord.HTTPException:
+            return None
+
+    @app_commands.command(
+        name="bookmark", description="リアクションで保存した投稿の一覧を表示します（オーナーのみ）"
+    )
+    @app_commands.guild_only()
+    async def bookmark(self, interaction: discord.Interaction):
+        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+            await interaction.response.send_message(
+                "ブックマークを開けるのはBotオーナーだけです。", ephemeral=True
+            )
+            return
+        if not self.bookmark_rules:
+            await interaction.response.send_message(
+                "ブックマークの絵文字が設定されていません（`BOOKMARK_REACTION`）。",
+                ephemeral=True,
+            )
+            return
+        items = self.bookmarks.items(interaction.user.id)
+        if not items:
+            reaction = emoji_display(self.config.bookmark_reaction) or "設定した絵文字"
+            await interaction.response.send_message(
+                f"ブックマークはまだありません。投稿に {reaction} を押すと保存されます。",
+                ephemeral=True,
+            )
+            return
+        view = BookmarkView(self, interaction.user.id, items)
+        await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
+
     @staticmethod
     async def _react_skip(message):
         try:
@@ -612,6 +819,8 @@ class Plugin:
             duck_enabled=ctx.config.get("duck_enabled", False),
             owner_id=ctx.config.get("owner_id", 0),
             default_speaker=ctx.config.get("default_speaker", 1),
+            bookmark_reaction=ctx.config.get("bookmark_reaction", ""),
+            bookmark_notify=ctx.config.get("bookmark_notify", True),
         )
         self.cog = ReaderCog(
             ctx.dependencies["discord.gateway"].bot,
@@ -622,6 +831,7 @@ class Plugin:
             ctx.dependencies["dictionary.reading"],
             ctx.dependencies["policy.restrictions"],
             config,
+            bookmarks=ctx.dependencies["feature.bookmarks"],
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)
         ctx.scope.add(remove)
