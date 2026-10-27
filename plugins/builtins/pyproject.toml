@@ -26,6 +26,9 @@ jllm-tts-contract = { workspace = true }
 "provider.tts.speechcpp" = "jllm_plugins.tts_speechcpp:plugin.json"
 "provider.tts.irodori" = "jllm_plugins.tts_irodori:plugin.json"
 "tts.router" = "jllm_plugins.tts_router:plugin.json"
+"dictionary.sound" = "jllm_plugins.dictionaries:sound_plugin.json"
+"dictionary.reading" = "jllm_plugins.dictionaries:reading_plugin.json"
+"speech.effects" = "jllm_plugins.audio_effects:plugin.json"
 
 [build-system]
 requires = ["hatchling"]

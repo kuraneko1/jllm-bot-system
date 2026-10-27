@@ -1,0 +1,12 @@
+{
+  "id": "dictionary.reading",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.dictionaries.reading_plugin:Plugin",
+  "provides": [{"capability": "dictionary.reading", "version": 1}],
+  "requires": [{"capability": "storage.local", "version": 1, "cardinality": "one"}],
+  "optional": [],
+  "permissions": ["storage.own"],
+  "config_schema": "reading_config.schema.json",
+  "multi_instance": false
+}

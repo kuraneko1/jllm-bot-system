@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "data_file": {"type": "string", "default": "readings.json", "minLength": 1}
+  },
+  "additionalProperties": false
+}

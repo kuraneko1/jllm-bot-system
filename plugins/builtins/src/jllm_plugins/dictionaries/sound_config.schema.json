@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "data_file": {"type": "string", "default": "sounds.json", "minLength": 1},
+    "sounds_dir": {"type": "string", "default": "sounds", "minLength": 1}
+  },
+  "additionalProperties": false
+}

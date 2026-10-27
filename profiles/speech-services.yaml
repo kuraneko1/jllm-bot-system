@@ -1,0 +1,14 @@
+profile: speech-services
+plugins:
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  dictionary.sound:
+    enabled: true
+  dictionary.reading:
+    enabled: true
+  speech.effects:
+    enabled: true
+    config:
+      ir_path: data/ir/room.wav

@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "ir_path": {"type": "string", "default": "data/ir/room.wav", "minLength": 1}
+  },
+  "additionalProperties": false
+}
