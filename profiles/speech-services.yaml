@@ -12,3 +12,5 @@ plugins:
     enabled: true
     config:
       ir_path: data/ir/room.wav
+  speech.playback:
+    enabled: true

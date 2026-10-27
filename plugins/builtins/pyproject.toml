@@ -5,6 +5,7 @@ requires-python = ">=3.14"
 dependencies = [
     "Pillow>=12.3,<13",
     "discord.py>=2.6,<3",
+    "discord-ext-voice-recv>=0.5.2a179",
     "aiohttp>=3.9,<4",
     "jllm-tts-contract",
 ]
@@ -29,6 +30,7 @@ jllm-tts-contract = { workspace = true }
 "dictionary.sound" = "jllm_plugins.dictionaries:sound_plugin.json"
 "dictionary.reading" = "jllm_plugins.dictionaries:reading_plugin.json"
 "speech.effects" = "jllm_plugins.audio_effects:plugin.json"
+"speech.playback" = "jllm_plugins.playback:plugin.json"
 
 [build-system]
 requires = ["hatchling"]
