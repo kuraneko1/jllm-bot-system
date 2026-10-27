@@ -1,0 +1,14 @@
+profile: tts-speechcpp
+plugins:
+  provider.tts.speechcpp:
+    enabled: true
+    instances:
+      local:
+        url: http://127.0.0.1:8089
+        voice: none
+        model: ""
+  tts.direct:
+    enabled: true
+bindings:
+  tts.direct:
+    tts.provider: provider.tts.speechcpp/local

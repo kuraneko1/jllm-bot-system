@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "url": {"type": "string", "default": "http://127.0.0.1:8089", "minLength": 1},
+    "voices_dir": {"type": "string", "default": ""},
+    "voice": {"type": "string", "default": "none"},
+    "model": {"type": "string", "default": ""},
+    "timeout": {"type": "number", "default": 120.0, "exclusiveMinimum": 0}
+  },
+  "additionalProperties": false
+}
