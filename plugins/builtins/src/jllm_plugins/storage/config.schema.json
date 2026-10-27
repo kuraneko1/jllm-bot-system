@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "data_dir": {"type": "string", "default": "data", "minLength": 1}
+  },
+  "additionalProperties": false
+}

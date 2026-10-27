@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "token_env": {"type": "string", "default": "DISCORD_TOKEN", "minLength": 1}
+  },
+  "additionalProperties": false
+}

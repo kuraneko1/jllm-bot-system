@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {"type": "string", "default": "user_restrictions.json", "minLength": 1}
+  },
+  "additionalProperties": false
+}

@@ -2,11 +2,19 @@
 name = "jllm-builtins"
 version = "0.1.0"
 requires-python = ">=3.14"
+dependencies = [
+    "Pillow>=12.3,<13",
+    "discord.py>=2.6,<3",
+]
 
 [project.entry-points."jllm.plugins"]
 "fake.provider" = "jllm_plugins.fake_provider:plugin.json"
 "fake.router" = "jllm_plugins.fake_router:plugin.json"
 "fake.consumer" = "jllm_plugins.fake_consumer:plugin.json"
+"storage.local" = "jllm_plugins.storage:plugin.json"
+"policy.restrictions" = "jllm_plugins.restrictions:plugin.json"
+"adapter.discord" = "jllm_plugins.discord:plugin.json"
+"feature.wavrank" = "jllm_plugins.wavrank:plugin.json"
 
 [build-system]
 requires = ["hatchling"]

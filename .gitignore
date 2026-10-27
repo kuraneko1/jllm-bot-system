@@ -10,6 +10,7 @@
 *.secret
 id_rsa*
 secrets/
+profiles.local/
 *credentials*.json
 
 # 実行データ・個人情報・会話ログ

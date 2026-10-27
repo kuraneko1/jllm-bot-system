@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "data_dir": {"type": "string", "default": "data", "minLength": 1},
+    "channel_id": {"type": "string", "default": ""},
+    "archive": {"type": "string"},
+    "sounds": {"type": "string"},
+    "out_dir": {"type": "string"},
+    "font": {"type": "string", "default": ""}
+  },
+  "additionalProperties": false
+}

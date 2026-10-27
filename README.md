@@ -3,7 +3,7 @@
 JLLM Bot System は、Discord Bot「jllm-voice」を全面再設計するプロジェクトです。DeepSeek Harness / Cordis の設計思想を取り入れ、主要機能を profile から着脱・交換できるプラグインとして実装します。
 
 > [!NOTE]
-> 現在は Phase 1 です。plugin discovery、capability binding、設定検証、lifecycle、CLI、検証用 fake plugin を実装しています。旧 jllm-voice の Discord 機能はまだ移行されていません。
+> Phase 1 の plugin kernel と、Phase 2 の Discord adapter・local storage・制限設定・WavRank vertical slice を実装しています。ほかの旧 jllm-voice 機能は移行中です。実 Discord・実音声での互換確認はまだ完了していません。
 
 ## 設計の要点
 
@@ -29,7 +29,20 @@ uv run jllm config validate --profile profiles/minimal.yaml
 uv run jllm doctor --profile profiles/minimal.yaml
 ```
 
-CLI は plugin・profile・依存関係の検査用です。Discord Bot を起動するものではありません。
+`plugins list`、`doctor`、`config validate` は plugin・profile・依存関係の検査用です。`run` は profile を起動します。
+
+## WavRank vertical slice
+
+`profiles/wavrank.yaml` には Discord adapter、local storage、制限設定、WavRank を含めています。実際に使うときは、認証情報を含められるローカル profile を Git 外に作り、チャンネルとデータの場所を指定します。
+
+```bash
+mkdir -p profiles.local
+cp profiles/wavrank.yaml profiles.local/wavrank.yaml
+# profiles.local/wavrank.yaml の channel_id・data_dir を編集
+uv run jllm run --profile profiles.local/wavrank.yaml
+```
+
+`data/exports/<channel>/messages.jsonl`、`sounds.json`、フォントなどの実行データは別途用意します。実データをこのリポジトリへコピーしないでください。
 
 ## 秘密情報と実行データ
 

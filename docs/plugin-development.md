@@ -1,6 +1,6 @@
 # プラグイン開発ガイド
 
-この文書では、現在の kernel を使った最小の plugin 作成手順を説明します。同梱の `fake.provider`、`fake.router`、`fake.consumer` は、Discord などの実機能ではなく、discovery・binding・lifecycle を確認するための例です。
+この文書では、現在の kernel を使った最小の plugin 作成手順を説明します。同梱の `fake.provider`、`fake.router`、`fake.consumer` は、discovery・binding・lifecycle を確認するための例です。実機能の例として、`adapter.discord`、`storage.local`、`policy.restrictions`、`feature.wavrank` も用意しています。
 
 ## 1. 配置
 
