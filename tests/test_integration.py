@@ -20,6 +20,10 @@ class MinimalProfileTests(unittest.IsolatedAsyncioTestCase):
             await kernel.start()
             self.assertTrue(all(node.state == "RUNNING" for node in plan.nodes.values()))
             self.assertEqual(plan.nodes["fake.consumer/main"].plugin.result, "first: hello")
+            self.assertEqual(
+                plan.nodes["fake.router/main"].plugin.dependency_ids,
+                ["fake.provider/first", "fake.provider/second"],
+            )
         finally:
             await kernel.stop()
         self.assertTrue(all(node.state == "STOPPED" for node in plan.nodes.values()))

@@ -4,6 +4,7 @@
 class Plugin:
     async def setup(self, ctx):
         self.providers = ctx.dependencies["fake.provider"]
+        self.dependency_ids = ctx.dependency_ids["fake.provider"]
         return {"fake.routed": self}
 
     def echo(self, text: str) -> str:

@@ -18,6 +18,7 @@ class Plugin(Protocol):
 
 async def _await_cleanup(task: asyncio.Task[Any]) -> Any:
     """Wait for cleanup despite repeated cancellation, then propagate it."""
+
     async def wait() -> None:
         try:
             await task
@@ -80,7 +81,7 @@ class ResourceScope:
                 result = dispose()
                 if inspect.isawaitable(result):
                     await result
-            except (Exception, asyncio.CancelledError):
+            except Exception, asyncio.CancelledError:
                 errors.append(RuntimeError(f"resource cleanup failed for {self._owner!r}"))
         if errors:
             raise ExceptionGroup("resource cleanup failed", errors)
@@ -92,3 +93,4 @@ class PluginContext:
     dependencies: Mapping[str, Any]
     scope: ResourceScope
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger("jllm.plugin"))
+    dependency_ids: Mapping[str, Any] = field(default_factory=dict)

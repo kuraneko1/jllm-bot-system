@@ -1,0 +1,15 @@
+{
+  "id": "tts.router",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.tts_router.plugin:Plugin",
+  "provides": [{"capability": "tts.synthesis", "version": 1}],
+  "requires": [
+    {"capability": "tts.provider", "version": 1, "cardinality": "many"},
+    {"capability": "storage.local", "version": 1, "cardinality": "one"}
+  ],
+  "optional": [{"capability": "tts.lifecycle", "version": 1, "cardinality": "optional_one"}],
+  "permissions": ["network.tts", "storage.own"],
+  "config_schema": "config.schema.json",
+  "multi_instance": false
+}

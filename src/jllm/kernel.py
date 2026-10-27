@@ -386,9 +386,17 @@ class Kernel:
                             values if req.cardinality == "many" else (values[0] if values else None)
                         )
                     node.state = "SETUP"
+                    dependency_ids = {
+                        req.capability: list(node.bindings[req.capability])
+                        for req in node.manifest.requires
+                    }
                     services = await node.plugin.setup(
                         PluginContext(
-                            node.config, deps, node.scope, logging.getLogger("jllm.plugin." + key)
+                            node.config,
+                            deps,
+                            node.scope,
+                            logging.getLogger("jllm.plugin." + key),
+                            dependency_ids,
                         )
                     )
                     if not isinstance(services, dict) or set(services) != {

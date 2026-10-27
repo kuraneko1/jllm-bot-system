@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "state_file": {"type": "string", "default": "tts_state.json", "minLength": 1},
+    "disabled_voices_path": {"type": "string", "default": "disabled_voices.json", "minLength": 1},
+    "failover": {"type": "boolean", "default": true},
+    "health_seconds": {"type": "number", "default": 30.0, "exclusiveMinimum": 0}
+  },
+  "additionalProperties": false
+}

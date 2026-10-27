@@ -81,6 +81,7 @@ class Plugin:
 | --- | --- |
 | `config` | JSON Schema で検証済みの instance 設定 |
 | `dependencies` | binding で解決した service。`many` は list |
+| `dependency_ids` | capability ごとの binding 済み instance id。順序は profile と同じ |
 | `scope` | disposer と asyncio task を所有する resource scope |
 | `logger` | instance id 付きの logger |
 

@@ -21,7 +21,14 @@ class FakePluginTests(unittest.IsolatedAsyncioTestCase):
             providers.append(provider)
         for order, expected in ((providers, "first: hello"), (providers[::-1], "second: hello")):
             router = Router()
-            services = await router.setup(SimpleNamespace(dependencies={"fake.provider": order}))
+            services = await router.setup(
+                SimpleNamespace(
+                    dependencies={"fake.provider": order},
+                    dependency_ids={
+                        "fake.provider": ["fake.provider/first", "fake.provider/second"]
+                    },
+                )
+            )
             await router.start()
             consumer = Consumer()
             await consumer.setup(

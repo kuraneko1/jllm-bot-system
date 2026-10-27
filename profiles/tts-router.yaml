@@ -1,0 +1,43 @@
+profile: tts-router
+plugins:
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  provider.tts.voicevox:
+    enabled: true
+    instances:
+      local:
+        url: http://127.0.0.1:50021
+  provider.tts.openai:
+    enabled: true
+    instances:
+      drama3:
+        url: http://127.0.0.1:8090
+        voice: test
+        model: drama3-small
+  provider.tts.speechcpp:
+    enabled: true
+    instances:
+      local:
+        url: http://127.0.0.1:8089
+        voice: none
+  provider.tts.irodori:
+    enabled: true
+    instances:
+      home:
+        url: http://127.0.0.1:8088
+        voice: none
+        data_dir: data
+  tts.router:
+    enabled: true
+    config:
+      failover: true
+      health_seconds: 30
+bindings:
+  tts.router:
+    tts.provider:
+      - provider.tts.irodori/home
+      - provider.tts.speechcpp/local
+      - provider.tts.openai/drama3
+      - provider.tts.voicevox/local
