@@ -19,7 +19,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv.workspace]
-members = ["plugins/builtins"]
+members = ["plugins/builtins", "contracts/tts"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jllm"]

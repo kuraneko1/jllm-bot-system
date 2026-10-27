@@ -3,7 +3,7 @@
 JLLM Bot System は、Discord Bot「jllm-voice」を全面再設計するプロジェクトです。DeepSeek Harness / Cordis の設計思想を取り入れ、主要機能を profile から着脱・交換できるプラグインとして実装します。
 
 > [!NOTE]
-> Phase 1 の plugin kernel と、Phase 2 の Discord adapter・local storage・制限設定・WavRank vertical slice を実装しています。ほかの旧 jllm-voice 機能は移行中です。実 Discord・実音声での互換確認はまだ完了していません。
+> Phase 1 の plugin kernel、Phase 2 の Discord・WavRank vertical slice、Phase 3 の TTS contract・VOICEVOX direct adapter を実装しています。ほかの旧 jllm-voice 機能は移行中です。実 Discord・実音声での互換確認はまだ完了していません。
 
 ## 設計の要点
 

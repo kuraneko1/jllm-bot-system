@@ -5,7 +5,12 @@ requires-python = ">=3.14"
 dependencies = [
     "Pillow>=12.3,<13",
     "discord.py>=2.6,<3",
+    "aiohttp>=3.9,<4",
+    "jllm-tts-contract",
 ]
+
+[tool.uv.sources]
+jllm-tts-contract = { workspace = true }
 
 [project.entry-points."jllm.plugins"]
 "fake.provider" = "jllm_plugins.fake_provider:plugin.json"
@@ -15,6 +20,8 @@ dependencies = [
 "policy.restrictions" = "jllm_plugins.restrictions:plugin.json"
 "adapter.discord" = "jllm_plugins.discord:plugin.json"
 "feature.wavrank" = "jllm_plugins.wavrank:plugin.json"
+"provider.tts.voicevox" = "jllm_plugins.tts_voicevox:plugin.json"
+"tts.direct" = "jllm_plugins.tts_direct:plugin.json"
 
 [build-system]
 requires = ["hatchling"]

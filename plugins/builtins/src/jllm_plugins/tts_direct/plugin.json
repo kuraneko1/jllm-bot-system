@@ -1,0 +1,12 @@
+{
+  "id": "tts.direct",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.tts_direct.plugin:Plugin",
+  "provides": [{"capability": "tts.synthesis", "version": 1}],
+  "requires": [{"capability": "tts.provider", "version": 1, "cardinality": "one"}],
+  "optional": [],
+  "permissions": [],
+  "config_schema": {},
+  "multi_instance": false
+}

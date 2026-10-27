@@ -1,0 +1,14 @@
+profile: tts-voicevox
+plugins:
+  provider.tts.voicevox:
+    enabled: true
+    instances:
+      local:
+        url: http://127.0.0.1:50021
+        timeout: 90
+        default_speaker: null
+  tts.direct:
+    enabled: true
+bindings:
+  tts.direct:
+    tts.provider: provider.tts.voicevox/local

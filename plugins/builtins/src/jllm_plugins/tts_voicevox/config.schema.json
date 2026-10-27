@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "url": {"type": "string", "default": "http://127.0.0.1:50021", "minLength": 1},
+    "timeout": {"type": "number", "default": 90.0, "exclusiveMinimum": 0},
+    "default_speaker": {"type": ["integer", "null"], "default": null}
+  },
+  "additionalProperties": false
+}
