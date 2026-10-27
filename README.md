@@ -55,6 +55,7 @@ uv run python tools/check-repository.py
 
 - [全体再設計書](PLUGIN_ARCHITECTURE.md)
 - [プラグイン開発ガイド](docs/plugin-development.md)
+- [互換性ステータス](docs/migration-status.md)
 - [開発参加ガイド](CONTRIBUTING.md)
 - [セキュリティ方針](SECURITY.md)
 
