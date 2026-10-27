@@ -12,7 +12,8 @@
     {"capability": "dictionary.sound", "version": 1, "cardinality": "one"},
     {"capability": "dictionary.reading", "version": 1, "cardinality": "one"},
     {"capability": "policy.restrictions", "version": 1, "cardinality": "one"},
-    {"capability": "feature.bookmarks", "version": 1, "cardinality": "one"}
+    {"capability": "feature.bookmarks", "version": 1, "cardinality": "one"},
+    {"capability": "dictionary.media", "version": 1, "cardinality": "one"}
   ],
   "optional": [],
   "permissions": ["discord.commands", "discord.messages.read", "voice.play"],

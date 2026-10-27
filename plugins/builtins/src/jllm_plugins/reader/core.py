@@ -23,6 +23,7 @@ from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
 from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
 
+from .media import MediaApprovalView
 from .panels import BookmarkView, ForceVoiceView, MyTalkView, RestrictView
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,7 @@ class ReaderCog(commands.Cog):
         restrictions,
         config,
         bookmarks=None,
+        media_store=None,
     ):
         self.bot = bot
         self.tts = tts
@@ -164,6 +166,13 @@ class ReaderCog(commands.Cog):
         self.restrictions = restrictions
         self.config = config
         self.bookmarks = bookmarks
+        self.media_store = media_store
+        self.media = media_store.media if media_store is not None else {}
+        self.pending_media = media_store.pending if media_store is not None else {}
+        self.media_dir = media_store.media_dir if media_store is not None else Path("media")
+        self.pending_media_dir = (
+            media_store.pending_dir if media_store is not None else Path("media/pending")
+        )
         self.bookmark_rules = parse_emoji_spec(config.bookmark_reaction)
         self.players: dict[int, SpeechPlayer] = {}
         self.voice_entries = settings.voice_entries.entries
@@ -487,9 +496,15 @@ class ReaderCog(commands.Cog):
                 media_trigger_match(content, word) for word in self.config.global_reaction_words
             ):
                 return
+            await self._send_media(message, global_only=True)
             if "v100" in self.config.global_reaction_words and "v100" in content:
                 await self._react_v100(message)
             return
+        if await self._handle_media_registration(message):
+            return
+        await self._send_media(message)
+        if "v100" in message.content.lower():
+            await self._react_v100(message)
         player = self.players.get(message.guild.id)
         if (
             player is None
@@ -779,6 +794,108 @@ class ReaderCog(commands.Cog):
         view = BookmarkView(self, interaction.user.id, items)
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
 
+    def _is_approver(self, user_id: int) -> bool:
+        approver = self.media_store.config.approver_id if self.media_store is not None else 0
+        return not approver or user_id == approver
+
+    def _media_key(self, phrase: str) -> str | None:
+        return self.media_store.media_key(phrase) if self.media_store is not None else None
+
+    async def _approve_media(self, request_id: str) -> str:
+        return await self.media_store.approve(request_id)
+
+    async def _reject_media(self, request_id: str) -> str:
+        return await self.media_store.reject(request_id)
+
+    async def _expire_media(self, request_id: str):
+        return await self.media_store.expire(request_id)
+
+    async def _handle_media_registration(self, message: discord.Message) -> bool:
+        if (
+            self.media_store is None
+            or self.bot.user is None
+            or self.bot.user not in message.mentions
+        ):
+            return False
+        attachments = [
+            attachment
+            for attachment in message.attachments
+            if attachment.content_type == "image/gif"
+            or (attachment.filename or "").lower().endswith(".gif")
+        ]
+        if len(attachments) != 1:
+            return False
+        phrase = re.sub(rf"<@!?{self.bot.user.id}>", "", message.content)
+        phrase = " ".join(phrase.split())
+        if not phrase:
+            await message.reply(
+                "登録する語句をメンションの後ろに書いてください。", mention_author=False
+            )
+            return True
+        if len(phrase) > 80:
+            await message.reply("登録語句が長すぎます（80文字以内）。", mention_author=False)
+            return True
+        attachment = attachments[0]
+        if attachment.size > self.media_store.config.max_bytes:
+            await message.reply("GIFが大きすぎます（10MB以内）。", mention_author=False)
+            return True
+        data = await attachment.read()
+        if not data.startswith((b"GIF87a", b"GIF89a")):
+            await message.reply("GIFファイルとして読み込めませんでした。", mention_author=False)
+            return True
+        request_id = await __import__("asyncio").to_thread(
+            self.media_store.register,
+            phrase,
+            data,
+            message.author.id,
+            message.channel.id,
+            message.id,
+        )
+        existing = self._media_key(phrase)
+        if self._is_approver(message.author.id):
+            result = await self._approve_media(request_id)
+            await message.reply(result, mention_author=False)
+            return True
+        view = MediaApprovalView(self, request_id)
+        suffix = "（既存登録を上書きします）" if existing else ""
+        approver = self.media_store.config.approver_id
+        response = await message.reply(
+            (
+                f"<@{approver}> さん、メディア登録申請です。\n"
+                f"語句: `{phrase}` {suffix}\n"
+                f"申請ID: `{request_id}`\n"
+                "下のボタンで許可または拒否してください。"
+            ),
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions(
+                users=True,
+                everyone=False,
+                roles=False,
+                replied_user=False,
+            ),
+            view=view,
+        )
+        view.message = response
+        return True
+
+    async def _send_media(self, message: discord.Message, *, global_only: bool = False):
+        if self.media_store is None or self._restricted(message, "gif"):
+            return
+        content = URL_PATTERN.sub("", message.content).casefold()
+        for trigger, filename in self.media.items():
+            if global_only and trigger.casefold() not in self.config.global_reaction_words:
+                continue
+            if not media_trigger_match(content, trigger):
+                continue
+            path = self.media_dir / filename
+            if not path.is_file():
+                logger.error("メディアファイルがありません: %s", path)
+                continue
+            try:
+                await message.channel.send(file=discord.File(path, filename=path.name))
+            except discord.DiscordException, OSError:
+                logger.exception("メディア送信に失敗: %s", path)
+
     @staticmethod
     async def _react_skip(message):
         try:
@@ -832,6 +949,7 @@ class Plugin:
             ctx.dependencies["policy.restrictions"],
             config,
             bookmarks=ctx.dependencies["feature.bookmarks"],
+            media_store=ctx.dependencies["dictionary.media"],
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)
         ctx.scope.add(remove)

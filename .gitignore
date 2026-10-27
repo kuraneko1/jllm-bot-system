@@ -49,7 +49,7 @@ exports/
 *.woff
 *.woff2
 sounds/
-media/
+/media/
 join_voice/
 miq_fonts/
 miq_emojis/

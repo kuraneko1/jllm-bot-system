@@ -34,6 +34,7 @@ class RepositoryHygieneTests(unittest.TestCase):
             "src/jllm/api.py",
             "docs/example.png",
             "plugins/builtins/src/jllm_plugins/fake_provider/plugin.json",
+            "plugins/builtins/src/jllm_plugins/media/store.py",
         )
         for name in names:
             with self.subTest(name=name):

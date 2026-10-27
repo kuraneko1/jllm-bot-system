@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "data_file": {"type": "string", "default": "media.json", "minLength": 1},
+    "media_dir": {"type": "string", "default": "media", "minLength": 1},
+    "max_bytes": {"type": "integer", "default": 10485760, "minimum": 1},
+    "max_dim": {"type": "integer", "default": 360, "minimum": 2},
+    "fps": {"type": "integer", "default": 8, "minimum": 1},
+    "colors": {"type": "integer", "default": 48, "minimum": 2, "maximum": 256},
+    "approver_id": {"type": "integer", "default": 0, "minimum": 0},
+    "owner_id": {"type": "integer", "default": 0, "minimum": 0}
+  },
+  "additionalProperties": false
+}

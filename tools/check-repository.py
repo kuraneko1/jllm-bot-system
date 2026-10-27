@@ -78,6 +78,8 @@ def path_problem(name: str) -> str | None:
     path = PurePosixPath(name)
     if name != ".env.example" and (name == ".env" or name.startswith(".env.")):
         return "実環境の env file"
+    if name.startswith("plugins/builtins/src/jllm_plugins/media/"):
+        return None
     if any(part in BLOCKED_DIRECTORIES for part in path.parts):
         return "実行データ用 directory"
     if path.suffix.lower() in BLOCKED_SUFFIXES:
