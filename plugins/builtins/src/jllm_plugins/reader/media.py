@@ -64,6 +64,20 @@ class MediaApprovalView(discord.ui.View):
         await interaction.response.edit_message(content=result, view=self)
 
 
+class HtmlApprovalView(MediaApprovalView):
+    approval_kind = "html"
+    registration_label = "HTML"
+
+    async def _authorized(self, interaction: discord.Interaction) -> bool:
+        approver = self.cog.html_store.config.approver_id if self.cog.html_store is not None else 0
+        if not approver or interaction.user.id == approver:
+            return True
+        await interaction.response.send_message(
+            "このHTML申請を確認できるのは登録管理者だけです。", ephemeral=True
+        )
+        return False
+
+
 class SoundApprovalView(MediaApprovalView):
     approval_kind = "sound"
     registration_label = "音声"

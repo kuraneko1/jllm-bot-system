@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "html_dir": {"type": "string", "default": "html", "minLength": 1},
+    "pending_dir": {"type": "string", "default": "html-pending", "minLength": 1},
+    "catalog_file": {"type": "string", "default": "html_catalog.json", "minLength": 1},
+    "viewer_base_url": {"type": "string", "default": "http://127.0.0.1:8030", "minLength": 1},
+    "dashboard_url": {"type": "string", "default": "http://127.0.0.1:8765", "minLength": 1},
+    "max_bytes": {"type": "integer", "default": 52428800, "minimum": 1},
+    "require_approval": {"type": "boolean", "default": true},
+    "approver_id": {"type": "integer", "default": 0, "minimum": 0}
+  },
+  "additionalProperties": false
+}

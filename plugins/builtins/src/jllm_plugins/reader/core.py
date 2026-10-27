@@ -25,7 +25,7 @@ from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
 from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
 
-from .media import MediaApprovalView, SoundApprovalView
+from .media import HtmlApprovalView, MediaApprovalView, SoundApprovalView
 from .panels import BookmarkView, ForceVoiceView, MyTalkView, RestrictView
 
 logger = logging.getLogger(__name__)
@@ -158,6 +158,7 @@ class ReaderCog(commands.Cog):
         config,
         bookmarks=None,
         media_store=None,
+        html_store=None,
     ):
         self.bot = bot
         self.tts = tts
@@ -169,6 +170,10 @@ class ReaderCog(commands.Cog):
         self.config = config
         self.bookmarks = bookmarks
         self.media_store = media_store
+        self.html_store = html_store
+        self.html_dir = html_store.html_dir if html_store is not None else Path("html")
+        self.pending_html = html_store.pending if html_store is not None else {}
+        self.html_catalog = html_store.catalog if html_store is not None else []
         self.media = media_store.media if media_store is not None else {}
         self.pending_media = media_store.pending if media_store is not None else {}
         self.pending_sound = {}
@@ -504,6 +509,8 @@ class ReaderCog(commands.Cog):
             await self._send_media(message, global_only=True)
             if "v100" in self.config.global_reaction_words and "v100" in content:
                 await self._react_v100(message)
+            return
+        if await self._handle_html_registration(message):
             return
         if await self._handle_media_registration(message):
             return
@@ -943,7 +950,11 @@ class ReaderCog(commands.Cog):
         await interaction.followup.send(message, ephemeral=True)
 
     def _is_approver(self, user_id: int) -> bool:
-        approver = self.media_store.config.approver_id if self.media_store is not None else 0
+        approver = (
+            self.media_store.config.approver_id
+            if self.media_store is not None
+            else self.html_store.config.approver_id if self.html_store is not None else 0
+        )
         return not approver or user_id == approver
 
     def _media_key(self, phrase: str) -> str | None:
@@ -957,6 +968,132 @@ class ReaderCog(commands.Cog):
 
     async def _expire_media(self, request_id: str):
         return await self.media_store.expire(request_id)
+
+    async def _notify_html_oversize(self, message, request_id, size, view):
+        approver_id = self.html_store.config.approver_id or self.config.owner_id
+        if not approver_id:
+            return None
+        request = self.pending_html.get(request_id)
+        if request is None:
+            return None
+        try:
+            approver = await self.bot.fetch_user(approver_id)
+        except Exception:
+            logger.exception("承認者の取得に失敗")
+            return None
+        source = "DM"
+        if getattr(message, "guild", None) is not None:
+            source = (
+                f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}"
+            )
+        try:
+            limit_mb = self.html_store.config.max_bytes // 1024 // 1024
+            message = (
+                "HTML公開申請です（制限超過: "
+                f"{size / 1024 / 1024:.1f}MB／上限{limit_mb}MB）。\n"
+            )
+            return await approver.send(
+                f"タイトル: {request['title']}\n"
+                f"申請者: {request['display_name']}\n"
+                f"申請ID: {request_id}\n"
+                f"元メッセージ: {source}\n"
+                "下のボタンで公開または拒否してください。",
+                view=view,
+            )
+        except Exception:
+            logger.exception("承認者へのDM送信に失敗")
+            return None
+
+    async def _approve_html(self, request_id: str) -> str:
+        return self.html_store.publish(request_id)
+
+    async def _reject_html(self, request_id: str) -> str:
+        return self.html_store.reject(request_id)
+
+    async def _expire_html(self, request_id: str):
+        return self.html_store.expire(request_id)
+
+    async def _handle_html_registration(self, message: discord.Message) -> bool:
+        if (
+            self.html_store is None
+            or self.bot.user is None
+            or self.bot.user not in message.mentions
+        ):
+            return False
+        attachments = [
+            attachment
+            for attachment in message.attachments
+            if (attachment.filename or "").lower().endswith((".html", ".htm"))
+            or attachment.content_type == "text/html"
+        ]
+        if not attachments:
+            return False
+        if len(attachments) != 1:
+            await message.reply("HTMLは1ファイルずつ添付してください。", mention_author=False)
+            return True
+        attachment = attachments[0]
+        try:
+            data = await attachment.read()
+        except discord.DiscordException, OSError:
+            logger.exception("HTML添付ファイルのダウンロードに失敗")
+            await message.reply(
+                "HTMLを取得できませんでした。もう一度添付してください。", mention_author=False
+            )
+            return True
+        config = self.html_store.config
+        oversize = attachment.size > config.max_bytes or len(data) > config.max_bytes
+        request_id = await __import__("asyncio").to_thread(
+            self.html_store.register,
+            data,
+            attachment.filename or "HTML",
+            message.author,
+        )
+        if oversize and not self._is_approver(message.author.id):
+            view = HtmlApprovalView(self, request_id)
+            sent = await self._notify_html_oversize(message, request_id, len(data), view)
+            if sent is not None:
+                view.message = sent
+                await message.reply(
+                    f"HTMLが大きすぎるため（{config.max_bytes // 1024 // 1024}MB以内）、"
+                    "管理者の承認待ちです。承認後に公開されます。",
+                    mention_author=False,
+                )
+                return True
+            response = await message.reply(
+                (
+                    f"<@{config.approver_id}> さん、HTML公開申請です"
+                    f"（制限超過: {len(data) / 1024 / 1024:.1f}MB）。\n"
+                ),
+                f"タイトル: {self.pending_html[request_id]['title']}\n"
+                f"申請ID: {request_id}\n"
+                "下のボタンで公開または拒否してください。",
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions(
+                    users=True, everyone=False, roles=False, replied_user=False
+                ),
+                view=view,
+            )
+            view.message = response
+            return True
+        if not config.require_approval or self._is_approver(message.author.id):
+            result = self.html_store.publish(request_id)
+            await message.reply(result, mention_author=False)
+            return True
+        view = HtmlApprovalView(self, request_id)
+        request = self.pending_html[request_id]
+        response = await message.reply(
+            f"<@{config.approver_id}> さん、HTML公開申請です。\n"
+            f"タイトル: {request['title']}\n"
+            f"申請ID: {request_id}\n"
+            "下のボタンで公開または拒否してください。",
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions(
+                users=True, everyone=False, roles=False, replied_user=False
+            ),
+            view=view,
+        )
+        view.message = response
+        return True
 
     async def _handle_media_registration(self, message: discord.Message) -> bool:
         if (
@@ -1098,6 +1235,7 @@ class Plugin:
             config,
             bookmarks=ctx.dependencies["feature.bookmarks"],
             media_store=ctx.dependencies["dictionary.media"],
+            html_store=ctx.dependencies["feature.html-library"],
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)
         ctx.scope.add(remove)
