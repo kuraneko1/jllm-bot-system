@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | Phase 1: plugin kernel | 実装・検証済み | discovery、binding、設定検証、lifecycle、CLI、fake plugin。31件＋1件のテスト、Ruff、wheel clean install |
 | Phase 2: Discord・WavRank | 実装・mock検証済み | adapter、storage、制限設定、WavRank。49件＋11件の結合を含むテスト。実 Discord は未確認 |
-| Phase 3: TTS・Reader | 移行中 | 独立 contract、4種類のprovider、direct adapter、failover router、音声効果、辞書、再生 queue、Reader 補助 service、Reader 中核、/mytalk、/restrict、/forcevoice、bookmark、メディア辞書は実装済み。登録command・HTML・/tts は未着手 |
+| Phase 3: TTS・Reader | 移行中 | 独立 contract、4種類のprovider、direct adapter、failover router、音声効果、辞書、再生 queue、Reader 補助 service、Reader 中核、/mytalk、/restrict、/forcevoice、bookmark、メディア辞書、/dict、/reading は実装済み。HTML・/tts は未着手 |
 | Phase 4: LLM・会話 | 未着手 | 翻訳、会話、session、WebChat 本体 |
 | Phase 5: Web | 未着手 | 認証、共通 board、管理 API、各 panel |
 | Phase 6: 独立機能 | 未着手 | Miq、Umigame、ImageGen、Bookmark など |

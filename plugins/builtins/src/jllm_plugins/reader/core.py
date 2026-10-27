@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,12 +19,13 @@ from jllm_plugins.bookmarks import (
     jump_url,
     parse_emoji_spec,
 )
+from jllm_plugins.dictionaries.dictionary import transcode_to_wav
 from jllm_plugins.ducking import VOICE_RECV_AVAILABLE, voice_recv
 from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
 from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
 
-from .media import MediaApprovalView
+from .media import MediaApprovalView, SoundApprovalView
 from .panels import BookmarkView, ForceVoiceView, MyTalkView, RestrictView
 
 logger = logging.getLogger(__name__)
@@ -169,6 +171,9 @@ class ReaderCog(commands.Cog):
         self.media_store = media_store
         self.media = media_store.media if media_store is not None else {}
         self.pending_media = media_store.pending if media_store is not None else {}
+        self.pending_sound = {}
+        self.pending_sound_dir = self.dictionary.sounds_dir / "pending"
+        self.pending_sound_dir.mkdir(parents=True, exist_ok=True)
         self.media_dir = media_store.media_dir if media_store is not None else Path("media")
         self.pending_media_dir = (
             media_store.pending_dir if media_store is not None else Path("media/pending")
@@ -793,6 +798,149 @@ class ReaderCog(commands.Cog):
             return
         view = BookmarkView(self, interaction.user.id, items)
         await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
+
+    dict_group = app_commands.Group(name="dict", description="特定語句を登録wavに差し替える辞書")
+
+    @dict_group.command(name="add", description="語句に音声ファイルを登録します")
+    @app_commands.describe(phrase="読み上げ文中の語句", file="差し替える音声ファイル（wav/mp3等）")
+    async def dict_add(
+        self,
+        interaction: discord.Interaction,
+        phrase: str,
+        file: discord.Attachment,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        phrase = " ".join(phrase.split())
+        if not phrase or len(phrase) > 80:
+            await interaction.followup.send(
+                "登録語句は1〜80文字で指定してください。",
+                ephemeral=True,
+            )
+            return
+        if not self.config.owner_id:
+            await interaction.followup.send(
+                "登録管理者が未設定のため、音声を登録できません。",
+                ephemeral=True,
+            )
+            return
+        request_id = uuid.uuid4().hex
+        target = self.pending_sound_dir / f"{request_id}.wav"
+        suffix = Path(file.filename or "").suffix.lower() or ".wav"
+        try:
+            data = await file.read()
+            converted = await asyncio.to_thread(transcode_to_wav, data, suffix, target)
+        except Exception:
+            logger.exception("音声登録ファイルの読み込み・変換に失敗")
+            converted = False
+        if not converted:
+            target.unlink(missing_ok=True)
+            await interaction.followup.send(
+                "音声の読み込み・変換に失敗しました。もう一度添付してください。",
+                ephemeral=True,
+            )
+            return
+        self.pending_sound[request_id] = {
+            "path": str(target),
+            "phrase": phrase,
+            "requester_id": interaction.user.id,
+            "author": interaction.user.display_name,
+        }
+        if interaction.user.id == self.config.owner_id:
+            result = await self._approve_sound(request_id)
+            await interaction.followup.send(result, ephemeral=True)
+            return
+        view = SoundApprovalView(self, request_id)
+        try:
+            from contextlib import closing
+
+            with closing(discord.File(target, filename="preview.wav")) as preview:
+                view.message = await interaction.channel.send(
+                    content=(
+                        f"<@{self.config.owner_id}> さん、音声登録申請です。\n"
+                        f"申請者: <@{interaction.user.id}>\n"
+                        f"語句: {discord.utils.escape_markdown(phrase)}\n"
+                        f"申請ID: `{request_id}`\n"
+                        "添付音声を確認して、下のボタンで許可または拒否してください。"
+                    ),
+                    file=preview,
+                    view=view,
+                    allowed_mentions=discord.AllowedMentions(
+                        users=[discord.Object(id=self.config.owner_id)],
+                        everyone=False,
+                        roles=False,
+                        replied_user=False,
+                    ),
+                )
+        except Exception:
+            logger.exception("音声登録申請の送信に失敗")
+            await self._expire_sound(request_id)
+            view.stop()
+            await interaction.followup.send(
+                "申請を送信できませんでした。時間を置いて再申請してください。",
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(
+            "管理者へ音声登録を申請しました。承認後に登録されます（申請は10分で期限切れ）。",
+            ephemeral=True,
+        )
+
+    def _rebuild_sound_dashboard(self):
+        # Web ダッシュボードの公開物は後続の web.host 側で生成する。
+        return None
+
+    async def _approve_sound(self, request_id: str) -> str:
+        request = self.pending_sound.pop(request_id, None)
+        if request is None:
+            return "この音声登録申請は期限切れです。"
+        source = Path(request["path"])
+        if not await asyncio.to_thread(source.is_file):
+            return "登録用音声が見つかりません。再申請してください。"
+        target = self.dictionary.sounds_dir / f"sound-{request_id}.wav"
+        try:
+            await asyncio.to_thread(source.replace, target)
+            self.dictionary.add(request["phrase"], target.name, author=request["author"])
+        except Exception:
+            logger.exception("承認済み音声の登録に失敗")
+            await asyncio.to_thread(source.unlink, missing_ok=True)
+            return "音声の登録に失敗しました。再申請してください。"
+        self._rebuild_sound_dashboard()
+        phrase = discord.utils.escape_markdown(request["phrase"])
+        return f"「{phrase}」の音声を登録しました。"
+
+    async def _reject_sound(self, request_id: str) -> str:
+        await self._expire_sound(request_id)
+        return "音声登録申請を拒否しました。"
+
+    async def _expire_sound(self, request_id: str):
+        request = self.pending_sound.pop(request_id, None)
+        if request is not None:
+            await asyncio.to_thread(Path(request["path"]).unlink, missing_ok=True)
+
+    reading_group = app_commands.Group(name="reading", description="文字列の読み（カナ）置換辞書")
+
+    @reading_group.command(name="add", description="文字列の読みを登録します")
+    @app_commands.describe(
+        trigger="置換する文字列（例: DGXspark）",
+        reading="読み（例: でぃーじーえっくす）",
+    )
+    async def reading_add(self, interaction: discord.Interaction, trigger: str, reading: str):
+        await interaction.response.defer(ephemeral=True)
+        self.readings.add(trigger, reading, author=interaction.user.display_name)
+        await interaction.followup.send(
+            f"「{trigger}」→「{reading}」を登録しました。",
+            ephemeral=True,
+        )
+
+    @reading_group.command(name="remove", description="読み辞書の登録を削除します")
+    async def reading_remove(self, interaction: discord.Interaction, trigger: str):
+        await interaction.response.defer(ephemeral=True)
+        message = (
+            f"「{trigger}」を削除しました。"
+            if self.readings.remove(trigger)
+            else "その文字列は登録されていません。"
+        )
+        await interaction.followup.send(message, ephemeral=True)
 
     def _is_approver(self, user_id: int) -> bool:
         approver = self.media_store.config.approver_id if self.media_store is not None else 0

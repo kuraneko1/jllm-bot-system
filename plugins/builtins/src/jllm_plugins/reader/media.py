@@ -39,6 +39,18 @@ class MediaApprovalView(discord.ui.View):
         self._disable()
         await interaction.response.edit_message(content=result, view=self)
 
+    async def on_timeout(self):
+        if self.finished:
+            return
+        self.finished = True
+        await getattr(self.cog, f"_expire_{self.approval_kind}")(self.request_id)
+        self._disable()
+        if self.message is not None:
+            await self.message.edit(
+                content=f"{self.registration_label}登録申請は期限切れです。",
+                view=self,
+            )
+
     @discord.ui.button(label="❌ 拒否", style=discord.ButtonStyle.danger, custom_id="media_reject")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self._authorized(interaction):
@@ -50,3 +62,21 @@ class MediaApprovalView(discord.ui.View):
         result = await getattr(self.cog, f"_reject_{self.approval_kind}")(self.request_id)
         self._disable()
         await interaction.response.edit_message(content=result, view=self)
+
+
+class SoundApprovalView(MediaApprovalView):
+    approval_kind = "sound"
+    registration_label = "音声"
+
+    def __init__(self, cog, request_id: str):
+        super().__init__(cog, request_id)
+        self.approve.label = "✅ 許可 / 登録"
+
+    async def _authorized(self, interaction: discord.Interaction) -> bool:
+        if self.cog.config.owner_id and interaction.user.id == self.cog.config.owner_id:
+            return True
+        await interaction.response.send_message(
+            "この申請を確認できるのはBotオーナーだけです。",
+            ephemeral=True,
+        )
+        return False
