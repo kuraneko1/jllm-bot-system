@@ -1,0 +1,12 @@
+{
+  "id": "llm.controller",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.llm.controller:Plugin",
+  "provides": [{"capability": "llm.controller", "version": 1}],
+  "requires": [],
+  "optional": [],
+  "permissions": ["ops.remote-control"],
+  "config_schema": {},
+  "multi_instance": false
+}

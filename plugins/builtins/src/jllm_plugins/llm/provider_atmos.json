@@ -1,0 +1,12 @@
+{
+  "id": "provider.llm.atmos",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.llm.provider_atmos:Plugin",
+  "provides": [{"capability": "llm.provider", "version": 1}],
+  "requires": [],
+  "optional": [],
+  "permissions": ["network.llm"],
+  "config_schema": "provider_atmos.schema.json",
+  "multi_instance": true
+}

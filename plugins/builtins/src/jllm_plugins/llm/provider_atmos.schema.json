@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "api_url": {"type": "string", "default": "http://127.0.0.1:8123", "minLength": 1},
+    "model": {"type": "string", "default": "gemma4-atmos-sft"},
+    "timeout": {"type": "number", "default": 30, "exclusiveMinimum": 0},
+    "max_tokens": {"type": "integer", "default": 1024, "minimum": 1},
+    "context": {"type": "integer", "default": 8192, "minimum": 512}
+  },
+  "additionalProperties": false
+}

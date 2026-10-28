@@ -39,6 +39,11 @@ jllm-tts-contract = { workspace = true }
 "feature.html-library" = "jllm_plugins.html_library:plugin.json"
 "tts.lifecycle" = "jllm_plugins.tts_lifecycle:plugin.json"
 "ops.vram" = "jllm_plugins.vram_control:plugin.json"
+"provider.llm.local" = "jllm_plugins.llm:provider_local.json"
+"provider.llm.sarashina" = "jllm_plugins.llm:provider_sarashina.json"
+"provider.llm.atmos" = "jllm_plugins.llm:provider_atmos.json"
+"llm.router" = "jllm_plugins.llm:router.json"
+"llm.controller" = "jllm_plugins.llm:controller.json"
 
 [build-system]
 requires = ["hatchling"]

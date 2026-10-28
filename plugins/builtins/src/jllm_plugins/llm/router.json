@@ -1,0 +1,15 @@
+{
+  "id": "llm.router",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.llm.router:Plugin",
+  "provides": [
+    {"capability": "llm.chat", "version": 1},
+    {"capability": "llm.read-mode", "version": 1}
+  ],
+  "requires": [{"capability": "llm.provider", "version": 1, "cardinality": "many"}, {"capability": "storage.local", "version": 1, "cardinality": "one"}],
+  "optional": [],
+  "permissions": ["network.llm", "storage.own"],
+  "config_schema": "router.schema.json",
+  "multi_instance": false
+}

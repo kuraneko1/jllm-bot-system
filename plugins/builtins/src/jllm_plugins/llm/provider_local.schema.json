@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "api_url": {"type": "string", "default": "http://127.0.0.1:8081", "minLength": 1},
+    "key_file": {"type": "string", "default": ""}
+  },
+  "additionalProperties": false
+}

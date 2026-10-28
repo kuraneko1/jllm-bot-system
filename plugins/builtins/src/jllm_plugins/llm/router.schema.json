@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "backend": {"type": "string", "enum": ["sarashina", "local", "atmos"], "default": "sarashina"},
+    "state_file": {"type": "string", "default": "llm_backend.json", "minLength": 1},
+    "local": {"type": "object", "additionalProperties": true},
+    "sarashina": {"type": "object", "additionalProperties": true},
+    "atmos": {"type": "object", "additionalProperties": true}
+  },
+  "additionalProperties": false
+}

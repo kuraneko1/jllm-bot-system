@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "api_url": {"type": "string", "default": "http://127.0.0.1:8082", "minLength": 1},
+    "key_file": {"type": "string", "default": ""},
+    "model": {"type": "string", "default": "sarashina3-mini"},
+    "requests_per_minute": {"type": "integer", "default": 0, "minimum": 0},
+    "max_wait": {"type": "number", "default": 120.0, "minimum": 0},
+    "translate_model": {"type": ["string", "null"], "default": null},
+    "translate_rpm": {"type": ["integer", "null"], "minimum": 0, "default": null},
+    "model_rpm": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}, "default": {}}
+  },
+  "additionalProperties": false
+}
