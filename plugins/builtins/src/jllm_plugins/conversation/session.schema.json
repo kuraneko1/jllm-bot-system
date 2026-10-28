@@ -1,0 +1,5 @@
+{
+  "type": "object",
+  "properties": {"directory": {"type": "string", "default": "sessions", "minLength": 1}},
+  "additionalProperties": false
+}

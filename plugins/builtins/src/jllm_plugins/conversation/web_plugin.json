@@ -1,0 +1,12 @@
+{
+  "id": "web.safe-fetch",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.conversation.web_plugin:Plugin",
+  "provides": [{"capability": "web.safe-fetch", "version": 1}],
+  "requires": [],
+  "optional": [],
+  "permissions": ["network.public-web"],
+  "config_schema": {},
+  "multi_instance": false
+}

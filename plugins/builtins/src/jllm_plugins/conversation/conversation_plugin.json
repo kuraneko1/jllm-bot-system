@@ -1,0 +1,12 @@
+{
+  "id": "feature.conversation",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.conversation.conversation_plugin:Plugin",
+  "provides": [{"capability": "feature.conversation", "version": 1}],
+  "requires": [{"capability": "llm.chat", "version": 1, "cardinality": "one"}],
+  "optional": [{"capability": "web.safe-fetch", "version": 1, "cardinality": "optional_one"}],
+  "permissions": ["discord.messages.read", "discord.messages.send"],
+  "config_schema": {},
+  "multi_instance": false
+}

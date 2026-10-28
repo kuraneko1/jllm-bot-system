@@ -1,0 +1,35 @@
+profile: conversation
+plugins:
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  provider.llm.sarashina:
+    enabled: true
+    instances:
+      main:
+        api_url: http://127.0.0.1:8082
+        model: sarashina3-mini
+  llm.router:
+    enabled: true
+    config:
+      backend: sarashina
+      sarashina:
+        api_url: http://127.0.0.1:8082
+        model: sarashina3-mini
+  store.sessions:
+    enabled: true
+  web.safe-fetch:
+    enabled: true
+  feature.conversation:
+    enabled: true
+  policy.restrictions:
+    enabled: true
+  feature.kitasan:
+    enabled: true
+  feature.talk-log:
+    enabled: true
+bindings:
+  llm.router:
+    llm.provider:
+      - provider.llm.sarashina/main

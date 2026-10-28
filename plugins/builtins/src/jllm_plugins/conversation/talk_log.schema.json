@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "log_path": {"type": "string", "default": "talk_log.jsonl", "minLength": 1},
+    "stats_path": {"type": "string", "default": "talk_stats.json", "minLength": 1}
+  },
+  "additionalProperties": false
+}

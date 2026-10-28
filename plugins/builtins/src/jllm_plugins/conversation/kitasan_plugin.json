@@ -1,0 +1,15 @@
+{
+  "id": "feature.kitasan",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.conversation.kitasan_plugin:Plugin",
+  "provides": [{"capability": "feature.kitasan", "version": 1}],
+  "requires": [
+    {"capability": "llm.chat", "version": 1, "cardinality": "one"},
+    {"capability": "policy.restrictions", "version": 1, "cardinality": "one"}
+  ],
+  "optional": [],
+  "permissions": ["discord.messages.read", "discord.messages.send"],
+  "config_schema": "kitasan.schema.json",
+  "multi_instance": false
+}

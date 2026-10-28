@@ -1,0 +1,5 @@
+{
+  "type": "object",
+  "properties": {"messages": {"type": "integer", "default": 100, "minimum": 1}},
+  "additionalProperties": false
+}

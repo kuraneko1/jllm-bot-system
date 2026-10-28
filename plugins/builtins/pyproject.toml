@@ -8,6 +8,7 @@ dependencies = [
     "discord-ext-voice-recv>=0.5.2a179",
     "aiohttp>=3.9,<4",
     "jllm-tts-contract",
+    "beautifulsoup4>=4.13,<5",
 ]
 
 [tool.uv.sources]
@@ -44,6 +45,11 @@ jllm-tts-contract = { workspace = true }
 "provider.llm.atmos" = "jllm_plugins.llm:provider_atmos.json"
 "llm.router" = "jllm_plugins.llm:router.json"
 "llm.controller" = "jllm_plugins.llm:controller.json"
+"store.sessions" = "jllm_plugins.conversation:session_plugin.json"
+"feature.kitasan" = "jllm_plugins.conversation:kitasan_plugin.json"
+"web.safe-fetch" = "jllm_plugins.conversation:web_plugin.json"
+"feature.conversation" = "jllm_plugins.conversation:conversation_plugin.json"
+"feature.talk-log" = "jllm_plugins.conversation:talk_log_plugin.json"
 
 [build-system]
 requires = ["hatchling"]
