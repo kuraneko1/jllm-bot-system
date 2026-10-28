@@ -13,7 +13,8 @@
     "owner_id": {"type": "integer", "default": 0, "minimum": 0},
     "default_speaker": {"type": "integer", "default": 1},
     "bookmark_reaction": {"type": "string", "default": ""},
-    "bookmark_notify": {"type": "boolean", "default": true}
+    "bookmark_notify": {"type": "boolean", "default": true},
+    "tts_switch_user_ids": {"type": "array", "items": {"type": "integer"}, "default": []}
   },
   "additionalProperties": false
 }

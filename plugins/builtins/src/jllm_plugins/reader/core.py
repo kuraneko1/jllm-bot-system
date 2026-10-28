@@ -24,6 +24,9 @@ from jllm_plugins.ducking import VOICE_RECV_AVAILABLE, voice_recv
 from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
 from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
+from jllm_plugins.tts_lifecycle.service import switch_message
+from jllm_plugins.tts_router.router import TTSRouter
+from jllm_plugins.vram_control.service import NoVramController, VramControlError, vram_summary
 
 from .media import HtmlApprovalView, MediaApprovalView, SoundApprovalView
 from .panels import BookmarkView, ForceVoiceView, MyTalkView, RestrictView
@@ -140,6 +143,7 @@ class ReaderConfig:
     default_speaker: int = 1
     bookmark_reaction: str = ""
     bookmark_notify: bool = True
+    tts_switch_user_ids: frozenset[int] = frozenset()
 
     def channel_allowed(self, channel_id: int) -> bool:
         return not self.allowed_channel_ids or channel_id in self.allowed_channel_ids
@@ -159,6 +163,7 @@ class ReaderCog(commands.Cog):
         bookmarks=None,
         media_store=None,
         html_store=None,
+        vram=None,
     ):
         self.bot = bot
         self.tts = tts
@@ -171,6 +176,7 @@ class ReaderCog(commands.Cog):
         self.bookmarks = bookmarks
         self.media_store = media_store
         self.html_store = html_store
+        self.vram = vram or NoVramController()
         self.html_dir = html_store.html_dir if html_store is not None else Path("html")
         self.pending_html = html_store.pending if html_store is not None else {}
         self.html_catalog = html_store.catalog if html_store is not None else []
@@ -214,7 +220,12 @@ class ReaderCog(commands.Cog):
             speakers = await self.tts.speakers()
         except TTSBackendError:
             return []
-        disabled = set(getattr(self.tts, "disabled_voices", None) or set())
+        disabled_value = getattr(self.tts, "disabled_voices", None)
+        disabled = (
+            set(disabled_value)
+            if isinstance(disabled_value, (set, frozenset, list, tuple))
+            else set()
+        )
         return [
             (style["id"], style["name"])
             for speaker in speakers
@@ -949,11 +960,192 @@ class ReaderCog(commands.Cog):
         )
         await interaction.followup.send(message, ephemeral=True)
 
+    tts_group = app_commands.Group(
+        name="tts", description="読み上げエンジン（TTSバックエンド）の状態と切替"
+    )
+    VRAM_TARGETS = {"vram-free": "free", "vram-restore": "restore"}
+
+    def _tts_router(self):
+        return self.tts if isinstance(self.tts, TTSRouter) else None
+
+    def _tts_lines(self, status: dict) -> str:
+        lines = []
+        for item in status["backends"]:
+            marks = []
+            if item["active"]:
+                marks.append("使用中")
+            if item["preferred"]:
+                marks.append("優先")
+            state = "疎通OK" if item["healthy"] else f"疎通NG（{item['error'] or '応答なし'}）"
+            lines.append(
+                f"・{item['display']}（{item['id']} / {item['kind']}）… {state}"
+                + (f"［{'・'.join(marks)}］" if marks else "")
+            )
+        return "\n".join(lines)
+
+    async def _tts_owner_only(self, interaction: discord.Interaction) -> bool:
+        if self.config.owner_id and interaction.user.id == self.config.owner_id:
+            return True
+        if interaction.user.id in self.config.tts_switch_user_ids:
+            return True
+        await interaction.response.send_message("この操作は管理者のみです。", ephemeral=True)
+        return False
+
+    @tts_group.command(
+        name="status",
+        description="いま使っている読み上げエンジンと、各バックエンドの疎通を表示します",
+    )
+    async def tts_status(self, interaction: discord.Interaction):
+        if not await self._tts_owner_only(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        router = self._tts_router()
+        if router is None:
+            await interaction.followup.send(
+                (
+                    f"単一のエンジンで動いています: {self.tts.describe()}\n"
+                    "複数化するには tts-backends.json を置いてください。"
+                ),
+                ephemeral=True,
+            )
+            return
+        status = await router.check_all()
+        extra = ""
+        if getattr(self.vram, "configured", False):
+            try:
+                extra = "\n\n" + vram_summary(await self.vram.status())
+            except VramControlError:
+                extra = "\n\nVRAMの状態を取得できませんでした。"
+        await interaction.followup.send(
+            f"いまのエンジン: {self.tts.describe()}\n\n{self._tts_lines(status)}{extra}",
+            ephemeral=True,
+        )
+
+    @tts_group.command(
+        name="check",
+        description="各バックエンドに触って疎通を確かめ直します（優先先が戻れば自動で戻ります）",
+    )
+    async def tts_check(self, interaction: discord.Interaction):
+        if not await self._tts_owner_only(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        router = self._tts_router()
+        if router is None:
+            await interaction.followup.send("単一のエンジンで動いています。", ephemeral=True)
+            return
+        status = await router.check_all()
+        await interaction.followup.send(
+            f"確認しました。いまのエンジン: {self.tts.describe()}\n\n{self._tts_lines(status)}",
+            ephemeral=True,
+        )
+
+    @staticmethod
+    def tts_target(target: str) -> tuple[str, str]:
+        value = (target or "").strip()
+        if value in ReaderCog.VRAM_TARGETS:
+            return "vram", ReaderCog.VRAM_TARGETS[value]
+        return "backend", value
+
+    async def _tts_vram(self, interaction: discord.Interaction, action: str):
+        if not getattr(self.vram, "configured", False):
+            await interaction.followup.send(
+                "VRAM開放の設定がありません（VRAM_CONTROL_*）。", ephemeral=True
+            )
+            return
+        try:
+            result = await self.vram.free() if action == "free" else await self.vram.restore()
+        except VramControlError as exc:
+            await interaction.followup.send(f"GPUの操作に失敗しました: {exc}", ephemeral=True)
+            return
+        logger.info("GPUのVRAM操作 %s: %s", action, vram_summary(result))
+        summary = vram_summary(result)
+        router = self._tts_router()
+        if action == "free":
+            note = (
+                "GPUのサービスを止めてVRAMを空けました。\n"
+                "読み上げは次の確認（最大30秒）で別のエンジンへ自動で退避します。"
+                if router is not None
+                else "GPUのサービスを止めてVRAMを空けました。読み上げは停止します。"
+            )
+        else:
+            note = "読み上げサーバーを起動しました。次の確認で優先エンジンに戻ります。"
+        await interaction.followup.send(f"{note}\n{summary}", ephemeral=True)
+
+    async def _tts_choices(self, interaction: discord.Interaction, current: str):
+        router = self._tts_router()
+        lowered = current.strip().lower()
+        choices = []
+        if getattr(self.vram, "configured", False):
+            choices.extend(
+                [
+                    app_commands.Choice(
+                        name="VRAMを全開放（GPUのサービスを停止）", value="vram-free"
+                    ),
+                    app_commands.Choice(
+                        name="GPUのサービスを戻す（読み上げを起動）", value="vram-restore"
+                    ),
+                ]
+            )
+        if router is not None:
+            choices.extend(
+                [
+                    app_commands.Choice(
+                        name=f"{spec.label()}（{spec.id} / {spec.kind}）"[:100], value=spec.id
+                    )
+                    for spec in router.specs
+                ]
+            )
+        if lowered:
+            choices = [
+                choice
+                for choice in choices
+                if lowered in choice.value.lower() or lowered in choice.name.lower()
+            ]
+        return choices[:25]
+
+    @tts_group.command(
+        name="switch", description="読み上げエンジンの切替、またはGPUのVRAM開放・復帰を行います"
+    )
+    @app_commands.describe(
+        backend="切り替え先のバックエンド、またはVRAMを全開放／GPUのサービスを戻す"
+    )
+    @app_commands.autocomplete(backend=_tts_choices)
+    async def tts_switch(self, interaction: discord.Interaction, backend: str):
+        if not await self._tts_owner_only(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        kind, value = self.tts_target(backend)
+        if kind == "vram":
+            await self._tts_vram(interaction, value)
+            return
+        router = self._tts_router()
+        if router is None:
+            await interaction.followup.send(
+                "単一のエンジンで動いています。tts-backends.json を置くと切り替えられます。",
+                ephemeral=True,
+            )
+            return
+        try:
+            result = await router.set_active(value)
+        except TTSBackendError as exc:
+            await interaction.followup.send(f"切り替えできません: {exc}", ephemeral=True)
+            return
+        note = switch_message(result, self.tts.describe())
+        logger.info(
+            "TTSバックエンドを %s に切り替え（%s / ライフサイクル %s）",
+            result["active"],
+            "疎通OK" if result["healthy"] else "疎通NG",
+            "あり" if result.get("lifecycle") else "なし",
+        )
+        await interaction.followup.send(note, ephemeral=True)
+
     def _is_approver(self, user_id: int) -> bool:
         approver = (
             self.media_store.config.approver_id
             if self.media_store is not None
-            else self.html_store.config.approver_id if self.html_store is not None else 0
+            else self.html_store.config.approver_id
+            if self.html_store is not None
+            else 0
         )
         return not approver or user_id == approver
 
@@ -989,8 +1181,7 @@ class ReaderCog(commands.Cog):
         try:
             limit_mb = self.html_store.config.max_bytes // 1024 // 1024
             message = (
-                "HTML公開申請です（制限超過: "
-                f"{size / 1024 / 1024:.1f}MB／上限{limit_mb}MB）。\n"
+                f"HTML公開申請です（制限超過: {size / 1024 / 1024:.1f}MB／上限{limit_mb}MB）。\n"
             )
             return await approver.send(
                 f"タイトル: {request['title']}\n"
@@ -1223,6 +1414,7 @@ class Plugin:
             default_speaker=ctx.config.get("default_speaker", 1),
             bookmark_reaction=ctx.config.get("bookmark_reaction", ""),
             bookmark_notify=ctx.config.get("bookmark_notify", True),
+            tts_switch_user_ids=frozenset(ctx.config.get("tts_switch_user_ids", [])),
         )
         self.cog = ReaderCog(
             ctx.dependencies["discord.gateway"].bot,
@@ -1236,6 +1428,7 @@ class Plugin:
             bookmarks=ctx.dependencies["feature.bookmarks"],
             media_store=ctx.dependencies["dictionary.media"],
             html_store=ctx.dependencies["feature.html-library"],
+            vram=ctx.dependencies.get("ops.vram"),
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)
         ctx.scope.add(remove)

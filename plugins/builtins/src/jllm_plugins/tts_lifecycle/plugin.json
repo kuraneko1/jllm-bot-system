@@ -1,0 +1,12 @@
+{
+  "id": "tts.lifecycle",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.tts_lifecycle.plugin:Plugin",
+  "provides": [{"capability": "tts.lifecycle", "version": 1}],
+  "requires": [],
+  "optional": [],
+  "permissions": ["ops.remote-control"],
+  "config_schema": {},
+  "multi_instance": false
+}

@@ -32,6 +32,12 @@ plugins:
     enabled: true
   dictionary.media:
     enabled: true
+  feature.html-library:
+    enabled: true
+  tts.lifecycle:
+    enabled: true
+  ops.vram:
+    enabled: true
   feature.reader:
     enabled: true
     config:
