@@ -18,7 +18,9 @@
   ],
   "optional": [
     {"capability": "tts.lifecycle", "version": 1, "cardinality": "optional_one"},
-    {"capability": "ops.vram", "version": 1, "cardinality": "optional_one"}
+    {"capability": "ops.vram", "version": 1, "cardinality": "optional_one"},
+    {"capability": "imagegen.provider", "version": 1, "cardinality": "optional_one"},
+    {"capability": "imagegen.controller", "version": 1, "cardinality": "optional_one"}
   ],
   "permissions": ["discord.commands", "discord.messages.read", "voice.play"],
   "config_schema": "config.schema.json",

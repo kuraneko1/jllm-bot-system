@@ -3,3 +3,4 @@
 *.jpg binary
 *.jpeg binary
 *.ico binary
+tests/aa/*.txt whitespace=-blank-at-eol,-blank-at-eof

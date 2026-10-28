@@ -10,6 +10,13 @@ dependencies = [
     "jllm-tts-contract",
     "beautifulsoup4>=4.13,<5",
     "webauthn>=2.2,<3",
+    "fonttools>=4.55,<5",
+    "emoji>=2.14,<3",
+    "regex>=2024.11,<2027",
+    "janome>=0.5,<1",
+    "cairocffi>=1.7,<2",
+    "pangocffi>=0.13,<1",
+    "pangocairocffi>=0.7,<1",
 ]
 
 [tool.uv.sources]
@@ -53,6 +60,9 @@ jllm-tts-contract = { workspace = true }
 "feature.talk-log" = "jllm_plugins.conversation:talk_log_plugin.json"
 "feature.translation" = "jllm_plugins.translation:plugin.json"
 "web.dashboard" = "jllm_plugins.dashboard:plugin.json"
+"imagegen.anima" = "jllm_plugins.imagegen:plugin.json"
+"feature.miq" = "jllm_plugins.miq:plugin.json"
+"feature.umigame" = "jllm_plugins.umigame:plugin.json"
 
 [build-system]
 requires = ["hatchling"]

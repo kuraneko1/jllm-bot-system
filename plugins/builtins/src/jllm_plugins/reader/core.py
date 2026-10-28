@@ -1,4 +1,6 @@
 import asyncio
+import io
+import json
 import logging
 import re
 import time
@@ -21,6 +23,8 @@ from jllm_plugins.bookmarks import (
 )
 from jllm_plugins.dictionaries.dictionary import transcode_to_wav
 from jllm_plugins.ducking import VOICE_RECV_AVAILABLE, voice_recv
+from jllm_plugins.imagegen.control import NoImageGenController
+from jllm_plugins.imagegen.service import ImageGenError
 from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
 from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
@@ -144,6 +148,7 @@ class ReaderConfig:
     bookmark_reaction: str = ""
     bookmark_notify: bool = True
     tts_switch_user_ids: frozenset[int] = frozenset()
+    toggles_path: str = "data/toggles.json"
 
     def channel_allowed(self, channel_id: int) -> bool:
         return not self.allowed_channel_ids or channel_id in self.allowed_channel_ids
@@ -164,6 +169,8 @@ class ReaderCog(commands.Cog):
         media_store=None,
         html_store=None,
         vram=None,
+        imagegen=None,
+        imagegen_controller=None,
     ):
         self.bot = bot
         self.tts = tts
@@ -177,6 +184,9 @@ class ReaderCog(commands.Cog):
         self.media_store = media_store
         self.html_store = html_store
         self.vram = vram or NoVramController()
+        self.imagegen = imagegen
+        self.imagegen_controller = imagegen_controller or NoImageGenController()
+        self.toggles = {"img": True, "wav": True}
         self.html_dir = html_store.html_dir if html_store is not None else Path("html")
         self.pending_html = html_store.pending if html_store is not None else {}
         self.html_catalog = html_store.catalog if html_store is not None else []
@@ -964,6 +974,7 @@ class ReaderCog(commands.Cog):
         name="tts", description="読み上げエンジン（TTSバックエンド）の状態と切替"
     )
     VRAM_TARGETS = {"vram-free": "free", "vram-restore": "restore"}
+    TOGGLE_LABELS = {"img": "画像生成", "wav": "辞書wav"}
 
     def _tts_router(self):
         return self.tts if isinstance(self.tts, TTSRouter) else None
@@ -1138,6 +1149,101 @@ class ReaderCog(commands.Cog):
             "あり" if result.get("lifecycle") else "なし",
         )
         await interaction.followup.send(note, ephemeral=True)
+
+    def _save_toggles(self):
+        path = Path(self.config.toggles_path)
+        try:
+            if path.parent != Path("."):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(self.toggles, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            logger.exception("toggles.json の保存に失敗")
+
+    async def _toggle_feature(self, interaction, feature, enabled):
+        label = self.TOGGLE_LABELS[feature]
+        if interaction.user.id != self.config.owner_id:
+            await interaction.response.send_message(
+                f"{label}のオン/オフはオーナーのみ変更できます。", ephemeral=True
+            )
+            return
+        if enabled is None:
+            state = "オン" if self.toggles[feature] else "オフ"
+            await interaction.response.send_message(f"{label}: {state}", ephemeral=True)
+            return
+        if feature == "img":
+            await interaction.response.defer(ephemeral=True)
+            async with self.imagegen_controller.lock:
+                self.toggles["img"] = False
+                self._save_toggles()
+                try:
+                    await self.imagegen_controller.set_enabled(enabled)
+                except ImageGenError as exc:
+                    await interaction.followup.send(
+                        f"画像生成はオフです。サーバの操作を完了できませんでした: {exc}",
+                        ephemeral=True,
+                    )
+                    return
+                self.toggles["img"] = enabled
+                self._save_toggles()
+            await interaction.followup.send(
+                "画像生成サーバを起動しました。画像生成をオンにしました。"
+                if enabled
+                else (
+                    "画像生成をオフにし、画像生成サーバを停止しました。"
+                    "画像生成用のVRAMを解放しました。"
+                ),
+                ephemeral=True,
+            )
+            return
+        self.toggles[feature] = enabled
+        self._save_toggles()
+        state = "オン" if enabled else "オフ"
+        await interaction.response.send_message(f"{label}を{state}にしました。", ephemeral=True)
+
+    @app_commands.command(
+        name="img", description="画像を生成します（ポジティブプロンプトのみ入力）"
+    )
+    @app_commands.describe(prompt="生成したい画像の説明")
+    @app_commands.guild_only()
+    async def img(self, interaction, prompt: str):
+        if not self.toggles["img"]:
+            await interaction.response.send_message(
+                "画像生成はオフになっています。", ephemeral=True
+            )
+            return
+        await interaction.response.defer()
+        if self.imagegen is None:
+            await interaction.followup.send("画像生成サーバが設定されていません。")
+            return
+        try:
+            data = await self.imagegen.generate(prompt)
+        except ImageGenError as exc:
+            await interaction.followup.send(f"画像生成に失敗しました: {exc}")
+            return
+        except Exception:
+            logger.exception("画像生成でError")
+            await interaction.followup.send("画像生成でエラーが発生しました。")
+            return
+        file = discord.File(io.BytesIO(data), filename="anima.png")
+        await interaction.followup.send(content=chr(96) + prompt + chr(96), file=file)
+
+    @app_commands.command(
+        name="wavplay", description="辞書wav再生のオン/オフを切り替えます（オーナーのみ）"
+    )
+    @app_commands.describe(enabled="Trueで再生、Falseで停止（未指定時は現在の状態を表示）")
+    @app_commands.guild_only()
+    async def wavplay(self, interaction, enabled: bool | None = None):
+        await self._toggle_feature(interaction, "wav", enabled)
+
+    @app_commands.command(
+        name="imggen", description="画像生成サーバを起動・停止します（オーナーのみ）"
+    )
+    @app_commands.describe(enabled="Trueでサーバ起動、Falseで停止してVRAM解放（未指定時は状態表示）")
+    @app_commands.guild_only()
+    async def imggen(self, interaction, enabled: bool | None = None):
+        await self._toggle_feature(interaction, "img", enabled)
 
     def _is_approver(self, user_id: int) -> bool:
         approver = (
@@ -1394,6 +1500,9 @@ class ReaderCog(commands.Cog):
             *(player.close() for player in self.players.values()), return_exceptions=True
         )
         self.players.clear()
+        close = getattr(self.imagegen, "close", None)
+        if close is not None:
+            await close()
 
 
 class Plugin:
@@ -1429,6 +1538,8 @@ class Plugin:
             media_store=ctx.dependencies["dictionary.media"],
             html_store=ctx.dependencies["feature.html-library"],
             vram=ctx.dependencies.get("ops.vram"),
+            imagegen=ctx.dependencies.get("imagegen.provider"),
+            imagegen_controller=ctx.dependencies.get("imagegen.controller"),
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)
         ctx.scope.add(remove)

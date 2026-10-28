@@ -1,0 +1,15 @@
+{
+  "id": "feature.umigame",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.umigame.plugin:Plugin",
+  "provides": [{"capability": "feature.umigame", "version": 1}],
+  "requires": [
+    {"capability": "discord.gateway", "version": 1, "cardinality": "one"},
+    {"capability": "policy.restrictions", "version": 1, "cardinality": "one"}
+  ],
+  "optional": [],
+  "permissions": ["discord.commands", "discord.messages.read", "discord.messages.send", "network.d1"],
+  "config_schema": "config.schema.json",
+  "multi_instance": false
+}

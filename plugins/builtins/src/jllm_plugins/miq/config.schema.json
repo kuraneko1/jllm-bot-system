@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "words": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": ["miq"]},
+    "layout": {"type": "string", "default": "auto"},
+    "size": {"type": "string", "default": "640x360"},
+    "text_align": {"type": "string", "enum": ["left", "center", "right"], "default": "right"},
+    "max_chars": {"type": "integer", "default": 2000, "minimum": 1},
+    "emoji_cache_limit": {"type": "integer", "default": 500, "minimum": 10}
+  },
+  "additionalProperties": false
+}

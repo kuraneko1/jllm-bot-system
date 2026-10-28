@@ -1,0 +1,11 @@
+profile: umigame
+plugins:
+  adapter.discord:
+    enabled: true
+    critical: true
+    config:
+      token_env: DISCORD_TOKEN
+  policy.restrictions:
+    enabled: true
+  feature.umigame:
+    enabled: true

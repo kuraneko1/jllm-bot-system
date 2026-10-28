@@ -11,7 +11,7 @@
 | Phase 3: TTS・Reader | 実装・mock検証済み | 独立 contract、4種類のprovider、direct adapter、failover router、音声効果、辞書、再生 queue、Reader 補助 service、Reader 中核、/mytalk、/restrict、/forcevoice、bookmark、メディア辞書、/dict、/reading、HTML登録、/tts、VRAM制御。実 Discord・実音声は未確認 |
 | Phase 4: LLM・会話 | 実装・mock検証済み | provider、router、読み上げモード、翻訳 Cog、会話・session・Kitasan。実 LLM・実 Discord は未確認 |
 | Phase 5: Web | 実装・mock/HTTP検証済み | 認証、共通 board、管理 API、各 panel。実ブラウザ・実公開環境は未確認 |
-| Phase 6: 独立機能 | 未着手 | Miq、Umigame、ImageGen、Bookmark など |
+| Phase 6: 独立機能 | 実装・互換/実画像検証済み | Miq、Umigame、Anima、D1、Playground。実フォントのMiq生成も確認 |
 | 本番 data 移行 | 未着手 | 実 data の走査、移行、逆変換、rollback は未実施 |
 | 実 Discord・実音声 | 未検証 | 現在の検証は mock・fixture・clean install が中心 |
 

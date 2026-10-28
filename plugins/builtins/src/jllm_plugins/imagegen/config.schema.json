@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "base_url": {"type": "string", "default": "http://127.0.0.1:8084", "minLength": 1},
+    "model": {"type": "string", "default": ""},
+    "negative": {"type": "string", "default": ""},
+    "width": {"type": "integer", "default": 1024, "minimum": 64},
+    "height": {"type": "integer", "default": 1024, "minimum": 64},
+    "timeout": {"type": "number", "default": 300, "exclusiveMinimum": 0}
+  },
+  "additionalProperties": false
+}

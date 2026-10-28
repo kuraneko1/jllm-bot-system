@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "d1_api_url": {"type": "string", "default": "http://127.0.0.1:8083", "minLength": 1},
+    "d1_timeout_seconds": {"type": "number", "default": 20, "exclusiveMinimum": 0},
+    "idle_minutes": {"type": "integer", "default": 30, "minimum": 1}
+  },
+  "additionalProperties": false
+}

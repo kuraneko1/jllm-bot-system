@@ -1,0 +1,19 @@
+profile: independent
+plugins:
+  adapter.discord:
+    enabled: true
+    critical: true
+    config:
+      token_env: DISCORD_TOKEN
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  policy.restrictions:
+    enabled: true
+  feature.miq:
+    enabled: true
+  feature.umigame:
+    enabled: true
+  imagegen.anima:
+    enabled: true

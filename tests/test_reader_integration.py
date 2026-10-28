@@ -15,6 +15,7 @@ class FakeBot:
         self.close = AsyncMock()
         self.start = AsyncMock()
         self.events = []
+        self.is_ready = lambda: True
 
     def event(self, handler):
         self.events.append(handler)
@@ -36,7 +37,7 @@ class ReaderIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 try:
                     await kernel.start()
                     self.assertTrue(all(node.state == "RUNNING" for node in plan.nodes.values()))
-                    bot.add_cog.assert_awaited_once()
+                    self.assertEqual(bot.add_cog.await_count, 3)
                     bot.start.assert_not_called()
                 finally:
                     await kernel.stop()

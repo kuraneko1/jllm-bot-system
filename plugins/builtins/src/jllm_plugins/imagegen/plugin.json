@@ -1,0 +1,15 @@
+{
+  "id": "imagegen.anima",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.imagegen.plugin:Plugin",
+  "provides": [
+    {"capability": "imagegen.provider", "version": 1},
+    {"capability": "imagegen.controller", "version": 1}
+  ],
+  "requires": [],
+  "optional": [],
+  "permissions": ["network.imagegen", "ops.remote-control"],
+  "config_schema": "config.schema.json",
+  "multi_instance": false
+}
