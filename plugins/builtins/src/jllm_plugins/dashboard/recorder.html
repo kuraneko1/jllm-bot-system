@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台本ボイスレコーダー - 順番に録って結合</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="alternate icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;background:#f5f5f7;color:#222;margin:0;display:flex;justify-content:center;min-height:100vh}
+.app{width:100%;max-width:680px;padding:20px 16px 60px}
+h1{font-size:1.3rem;text-align:center;margin:8px 0 4px}
+.sub{text-align:center;color:#666;font-size:.9rem;margin-bottom:12px}
+.topbar{position:sticky;top:0;z-index:10;background:#f5f5f7ee;backdrop-filter:blur(6px);padding:10px 0;border-bottom:1px solid #e5e5e5;margin-bottom:12px}
+.progress{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.bar{flex:1;height:10px;background:#e0e0e0;border-radius:99px;overflow:hidden}
+.bar>div{height:100%;background:#4caf50;width:0%;transition:width .3s}
+.card{background:#fff;border-radius:16px;padding:14px;box-shadow:0 4px 16px rgba(0,0,0,.07);margin-bottom:10px}
+.card.current{outline:3px solid #4caf50}
+.card.done{border-left:6px solid #4caf50}
+.card .no{font-size:.8rem;color:#fff;background:#333;border-radius:99px;padding:2px 10px;display:inline-block}
+.card .label{font-weight:700;margin:8px 0 4px;font-size:1rem}
+.card .text{background:#fafafa;border:1px solid #eee;border-radius:10px;padding:10px;line-height:1.7;white-space:pre-wrap}
+.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
+input,textarea{width:100%;font:inherit;border:1px solid #ddd;border-radius:10px;padding:10px;margin:6px 0 12px} label{display:block;font-size:.9rem} button,select{font-size:.95rem;border-radius:10px;border:1px solid #ddd;padding:9px 12px;background:#fff}
+button{cursor:pointer}
+button:disabled{opacity:.4}
+.btn-rec{background:#e53935;color:#fff;border:none;font-weight:700;min-width:110px}
+.btn-rec.recording{animation:pulse 1.2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(229,57,53,.5)}70%{box-shadow:0 0 0 14px rgba(229,57,53,0)}100%{box-shadow:0 0 0 0 rgba(229,57,53,0)}}
+.btn-next{background:#222;color:#fff;border:none}
+.btn-combine{background:#4caf50;color:#fff;border:none;font-weight:700;font-size:1.05rem;padding:12px;width:100%}
+.timer{font-variant-numeric:tabular-nums;font-weight:700}
+audio{width:100%;margin-top:8px}
+.status{font-size:.85rem;color:#666;min-height:1.4em}
+canvas#level{width:100%;height:54px;background:#111;border-radius:10px;display:block}
+.final audio{width:100%}
+.hint{font-size:.82rem;color:#777;line-height:1.7;margin-top:12px}
+a.dl{display:block;text-align:center;background:#222;color:#fff;text-decoration:none;padding:12px;border-radius:10px;margin-top:8px;font-weight:700}
+.icon{vertical-align:-2px}
+.status.is-rec::before,.status.is-done::before{content:"";display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:50%}
+.status.is-rec::before{background:#e53935;box-shadow:0 0 0 3px rgba(229,57,53,.18);animation:blink 1.1s ease-in-out infinite}
+.status.is-done::before{background:#4caf50;box-shadow:0 0 0 3px rgba(76,175,80,.18)}
+@keyframes blink{50%{opacity:.3}}
+</style>
+</head>
+<body>
+<div class="app">
+<a href="/" target="_top">← 共通ボード</a>
+<h1><svg class="icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg> 台本ボイスレコーダー</h1>
+<div class="sub">上から順番に録る → 最後に1本に結合して出力</div>
+
+<div class="topbar">
+  <div class="progress">
+    <span id="progText">0 / 10 収録済み</span>
+    <div class="bar"><div id="progBar"></div></div>
+  </div>
+  <div class="card" style="margin:0">
+    <div class="row" style="margin:0">
+      <select id="micSelect" style="flex:1" title="マイク"></select>
+      <select id="silence" title="つなぎの無音">
+        <option value="0">無音なし</option>
+        <option value="0.3" selected>無音0.3秒</option>
+        <option value="0.5">無音0.5秒</option>
+        <option value="1">無音1.0秒</option>
+      </select>
+    </div>
+    <canvas id="level" width="640" height="54" style="margin-top:10px"></canvas>
+    <div id="gStatus" class="status">マイク準備中… localhost / https で開いてください</div>
+  </div>
+</div>
+
+<section class="card" aria-labelledby="scriptHeading">
+  <h2 id="scriptHeading" style="font-size:1.1rem;margin-top:0">読み上げ台本を選ぶ</h2>
+  <label for="presetSelect">プリセット</label>
+  <div class="row"><select id="presetSelect" style="flex:1"></select><button id="applyPreset" type="button">この台本を使う</button></div>
+  <p id="scriptSummary" class="hint"></p>
+  <div id="scriptNotice" class="status" role="status" aria-live="polite"></div>
+  <details><summary>自作・AI生成のJSONを読み込む</summary>
+    <p class="hint">JSONファイルを選ぶか、AIの出力を貼り付けて読み込みます。台本を変更すると収録済みのテイクは消去されます。</p>
+    <label for="scriptFile">JSONファイル（256KB以内）</label><input id="scriptFile" type="file" accept=".json,application/json"><button id="loadScriptFile" type="button">ファイルを読み込む</button>
+    <label for="scriptJson" style="margin-top:12px">JSONを貼り付け</label><textarea id="scriptJson" rows="7" maxlength="262144" spellcheck="false" placeholder='{"version":1,"title":"私の台本","parts":[{"label":"自然な声","text":"今日はよい天気ですね。"}]}'></textarea>
+    <div class="row"><button id="loadScriptText" type="button">貼り付けた台本を読み込む</button><button id="exportScript" type="button">現在の台本をJSONで保存</button></div>
+    <p class="hint">形式：version は 1、title は台本名、parts はパートの配列。各パートに label（パート名）と text（読み上げ本文）を指定します。1〜40パートに対応します。</p>
+  </details>
+  <details style="margin-top:14px"><summary>AIに台本を作ってもらう</summary>
+    <p class="hint">条件を選んで依頼文をコピーし、使っているAIやエージェントに貼り付けてください。返されたJSONを上の欄で読み込みます。</p>
+    <label for="promptTheme">テーマ・話し方の希望</label><input id="promptTheme" maxlength="300" value="日常会話。落ち着いた声、明るい声、疑問、軽い驚きを自然に含める。">
+    <div class="row"><label for="promptParts" style="flex:1">パート数<input id="promptParts" type="number" min="1" max="40" value="6"></label><label for="promptSeconds" style="flex:1">収録時間の目安（秒）<input id="promptSeconds" type="number" min="10" max="110" value="60"></label></div>
+    <label for="aiPrompt">コピーする依頼文</label><textarea id="aiPrompt" rows="12" readonly spellcheck="false"></textarea>
+    <button id="copyPrompt" type="button">依頼プロンプトをコピー</button><div id="promptNotice" class="status" role="status"></div>
+  </details>
+</section>
+<div id="scripts"></div>
+
+<div class="card final">
+  <h3 style="margin:0 0 8px"><svg class="icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M6.5 9.5a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-1 1M9.5 6.5a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l1-1"/></svg> 結合して出力</h3>
+  <div id="finalStatus" class="status">全パート録音後に結合できます（一部だけでも可）</div>
+  <button id="combineBtn" class="btn-combine">結合して1本にする（WAV出力）</button>
+  <audio id="finalAudio" controls style="display:none"></audio>
+  <a id="finalDl" class="dl" style="display:none"><svg class="icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M2.5 12v1.5h11V12"/></svg> 結合音声をダウンロード (combined.wav)</a>
+  <div class="row">
+    <button id="playAll">▶ 順番に連続再生（仮プレビュー）</button>
+    <button id="clearAll">全テイク消去</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="font-size:1.1rem;margin-top:0">話者クローンの登録を申請</h2>
+  <p class="hint">結合した録音、または手元の音声ファイルを送信できます。管理者の承認後に話者として登録されます。録音は申請を送信するまで端末内だけに保持されます。</p>
+  <form id="requestForm">
+    <label for="requesterName">申請者名（Discordの名前など）</label><input id="requesterName" maxlength="80" required>
+    <label for="voiceName">希望する話者名</label><input id="voiceName" maxlength="80" placeholder="例：Clone Ryu" required>
+    <label for="requestFile">手元の音声を使う場合（選択すると結合音声より優先）</label><input id="requestFile" type="file" accept=".wav,.webm,.mp3,.flac,.ogg,.m4a,.opus,audio/*">
+    <label for="requestNote">管理者へのメモ（任意）</label><textarea id="requestNote" maxlength="500" rows="2"></textarea>
+    <p class="hint">20MB以内・1〜120秒。自分の声、または利用許可を得た声を送信してください。音量は自動で揃えます。</p>
+    <button id="requestSubmit" type="submit" class="btn-combine">管理者に登録を申請</button>
+    <div id="requestStatus" class="status" role="status" aria-live="polite"></div>
+  </form>
+</div>
+<div class="hint">
+・使い方: ① 各パートの「●録音」→読む→「■停止」→試聴。気に入らなければ再録音。②「次へ」で下へ移動。③全部録れたら「結合して1本にする」。WAVで保存されます。<br>
+・録音はマイクの許可が必要です。申請した音声は管理者だけが確認できます。
+</div>
+</div>
+
+<script>
+const DEFAULT_SCRIPTS = [
+{label:"【穏やか・朝の情景】", text:"おはようございます。窓の外はまだ薄暗く、静かな街がゆっくり目を覚ましています。"},
+{label:"【明るい・期待】", text:"おっ、動きました！　昨日まで失敗していたプログラムが、一発で動いています。"},
+{label:"【困惑・予想外】", text:"……あれ？　さっきまでここにあったファイルがありません。どこへ行ったのでしょう。"},
+{label:"【焦り・緊迫】", text:"まずい、残り三分です。お願いだから、今だけは止まらないでください。"},
+{label:"【怒り・苛立ち】", text:"いや、それはおかしいでしょう！　三時間調べた原因が、たった一文字の入力ミスでした。"},
+{label:"【呆れ・軽い笑い】", text:"再起動したら、普通に直りました。……あの調査時間はいったい何だったのでしょうか。"},
+{label:"【不安・静かな恐怖】", text:"午前三時。誰も触っていないのに画面が光り、カーソルがゆっくり動きました。"},
+{label:"【低声・SF／人工知能】", text:"西暦二〇三五年。人工知能は、個人のコンピューターの中でも静かに動き続けていました。"},
+{label:"【無機質・システム音声】", text:"システムチェック開始。演算装置、正常。ネットワーク、正常。すべての機能が利用可能です。"},
+{label:"【静かな決意・エンディング】", text:"何度失敗しても、もう一度試します。昨日できなかったことが、今日はできるかもしれません。"},
+];
+
+const PRESETS = {
+  expressive: {title:"感情・場面のバリエーション（元の台本）",parts:DEFAULT_SCRIPTS},
+  short: {title:"短め・自然な日常会話",parts:[
+    {label:"落ち着いた挨拶",text:"こんにちは。今日は少し早く起きたので、窓を開けて空気を入れ替えました。"},
+    {label:"明るい会話",text:"このお店、前から気になっていたんです。今度の週末に、一緒に行ってみませんか。"},
+    {label:"疑問と驚き",text:"あれ、もうこんな時間ですか。話していると、時間が過ぎるのが早いですね。"},
+    {label:"穏やかな締め",text:"今日はありがとうございました。気をつけて帰ってください。またお話ししましょう。"},
+  ]},
+  narration: {title:"落ち着いたナレーション",parts:[
+    {label:"朝の景色",text:"朝の光がカーテンを通して差し込みます。静かな部屋に、遠くの鳥の声が聞こえてきました。"},
+    {label:"街の様子",text:"駅前の通りには、買い物をする人や仕事へ向かう人が行き交っています。風は少し冷たく感じられます。"},
+    {label:"手順の説明",text:"最初に画面の設定を開きます。項目を確認したら、保存のボタンを押してください。"},
+    {label:"自然の描写",text:"木々の葉がゆっくりと揺れています。雲の間から見える青空は、昨日よりも澄んでいました。"},
+    {label:"振り返り",text:"急いでいるときほど、一度立ち止まって考えてみましょう。小さな気づきが、次の一歩につながります。"},
+    {label:"締めの案内",text:"これで本日のご案内は終了です。最後までお聞きいただき、ありがとうございました。"},
+  ]},
+  articulation: {title:"数字・言葉のバリエーション",parts:[
+    {label:"数字と時刻",text:"集合は午前九時十五分です。参加者は十二人で、午後三時ごろには解散する予定です。"},
+    {label:"曜日と予定",text:"月曜日に準備を始めて、水曜日に確認します。金曜日の夕方までに、結果をお知らせください。"},
+    {label:"食べ物",text:"温かいお茶と、焼きたてのパンを用意しました。りんごとみかんも、お好きなだけどうぞ。"},
+    {label:"季節",text:"春には花が咲き、夏には緑が濃くなります。秋の風が吹くと、冬の訪れが少しずつ近づきます。"},
+    {label:"身近なもの",text:"机の上には、鉛筆とノートがあります。引き出しから、はさみと封筒を取り出してください。"},
+    {label:"問いかけ",text:"赤い箱と青い箱、どちらに入れましょうか。大きいほうがよければ、こちらを使ってください。"},
+  ]},
+};
+let SCRIPTS = PRESETS.expressive.parts.map(part=>({...part}));
+let scriptTitle = PRESETS.expressive.title;
+let combining = false, preparingMic = false, playingAll = false;
+
+const scriptsEl = document.getElementById('scripts');
+const micSelect = document.getElementById('micSelect');
+const gStatus = document.getElementById('gStatus');
+const progText = document.getElementById('progText');
+const progBar = document.getElementById('progBar');
+const combineBtn = document.getElementById('combineBtn');
+const finalAudio = document.getElementById('finalAudio');
+const finalDl = document.getElementById('finalDl');
+const finalStatus = document.getElementById('finalStatus');
+
+let stream=null, audioCtx=null, analyser=null, rafId=null;
+let mediaRecorder=null, chunks=[], recordingIdx=-1, recStart=0, recTimer=null;
+let takes = new Array(SCRIPTS.length).fill(null); // {blob,url,duration}
+let currentIdx = 0;
+let combinedBlob = null, combinedUrl = null;
+function invalidateCombined(){
+  combinedBlob=null;
+  if(combinedUrl)URL.revokeObjectURL(combinedUrl);
+  combinedUrl=null; finalAudio.removeAttribute("src");finalAudio.style.display="none";
+  finalDl.removeAttribute("href");finalDl.style.display="none";
+}
+
+// レベルメーター
+const canvas=document.getElementById('level');
+const lctx=canvas.getContext('2d');
+function drawLevel(){
+  const w=canvas.width,h=canvas.height;
+  lctx.fillStyle='#111';lctx.fillRect(0,0,w,h);
+  if(!analyser){lctx.fillStyle='#888';lctx.font='14px sans-serif';lctx.textAlign='center';lctx.fillText('マイク待機中',w/2,h/2+5);return;}
+  const d=new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(d);
+  lctx.strokeStyle='#4caf50';lctx.lineWidth=2;lctx.beginPath();
+  const slice=w/d.length;
+  for(let i=0;i<d.length;i++){const v=d[i]/128.0;const y=v*h/2;if(i===0)lctx.moveTo(0,y);else lctx.lineTo(i*slice,y);}
+  lctx.stroke();
+  rafId=requestAnimationFrame(drawLevel);
+}
+
+async function initMic(deviceId){
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  if(audioCtx){try{await audioCtx.close()}catch(e){}}
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:deviceId?{deviceId:{exact:deviceId}}:true});}
+  catch(e){gStatus.textContent='マイクが使えません: '+e.message;return false;}
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  const src=audioCtx.createMediaStreamSource(stream);
+  analyser=audioCtx.createAnalyser();analyser.fftSize=2048;src.connect(analyser);
+  cancelAnimationFrame(rafId);drawLevel();
+  gStatus.textContent='録音できます。上から順に ●録音 を押してください';
+  await loadMics();return true;
+}
+async function loadMics(){
+  try{
+    const devs=await navigator.mediaDevices.enumerateDevices();
+    const mics=devs.filter(d=>d.kind==='audioinput');
+    const cur=micSelect.value;micSelect.innerHTML='';
+    mics.forEach((m,i)=>{const o=document.createElement('option');o.value=m.deviceId;o.textContent=m.label||`マイク ${i+1}`;micSelect.appendChild(o);});
+    if(cur)micSelect.value=cur;
+  }catch(e){}
+}
+micSelect.onchange=()=>initMic(micSelect.value);
+
+// パートUI生成
+function fmtTime(ms){const m=String(Math.floor(ms/60000)).padStart(2,'0');const s=String(Math.floor(ms%60000/1000)).padStart(2,'0');const d=Math.floor(ms%1000/100);return `${m}:${s}.${d}`;}
+function updateProgress(){
+  const n=takes.filter(Boolean).length;
+  progText.textContent=`${n} / ${SCRIPTS.length} 収録済み`;
+  progBar.style.width=(n/SCRIPTS.length*100)+'%';
+  document.querySelectorAll('.card.part').forEach((c,i)=>{
+    c.classList.toggle('done',!!takes[i]);
+    c.classList.toggle('current',i===currentIdx);
+  });
+}
+function scrollToIdx(i){document.querySelectorAll('.card.part')[i]?.scrollIntoView({behavior:'smooth',block:'center'});}
+
+function renderScripts(){
+scriptsEl.replaceChildren();
+SCRIPTS.forEach((s,i)=>{
+  const div=document.createElement('div');
+  div.className='card part';div.dataset.i=i;
+  div.innerHTML=`
+    <span class="no">パート ${i+1} / ${SCRIPTS.length}</span>
+    <div class="label"></div>
+    <div class="text" contenteditable="true" role="textbox" aria-multiline="true" aria-label="読み上げ本文"></div>
+    <div class="row">
+      <button class="btn-rec">● 録音</button>
+      <button class="btn-stop" disabled>■ 停止</button>
+      <span class="timer">00:00.0</span>
+      <span class="status" style="flex:1">未収録</span>
+    </div>
+    <audio controls style="display:none"></audio>
+    <div class="row sub-row" style="display:none">
+      <button class="btn-next">↓ 次へ</button>
+      <button class="btn-rerec">↺ 録り直し</button>
+      <button class="btn-del">消去</button>
+      <a class="btn-dl" style="text-decoration:none;text-align:center;flex:1;border:1px solid #ddd;border-radius:10px;padding:9px 12px"><svg class="icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M2.5 12v1.5h11V12"/></svg> このパートを保存</a>
+    </div>`;
+  div.querySelector(".label").textContent=s.label;
+  div.querySelector(".text").textContent=s.text;
+  div.querySelector(".text").addEventListener('input',event=>{
+    SCRIPTS[i].text=event.currentTarget.innerText;updateScriptSummary();
+  });
+  scriptsEl.appendChild(div);
+
+  const recB=div.querySelector('.btn-rec'),stopB=div.querySelector('.btn-stop'),
+        timer=div.querySelector('.timer'),st=div.querySelector('.status'),
+        au=div.querySelector('audio'),sub=div.querySelector('.sub-row');
+
+  recB.onclick=()=>startRec(i);
+  stopB.onclick=stopRec;
+  div.querySelector('.btn-next').onclick=()=>{currentIdx=Math.min(SCRIPTS.length-1,i+1);updateProgress();scrollToIdx(currentIdx);};
+  div.querySelector('.btn-rerec').onclick=()=>startRec(i);
+  div.querySelector('.btn-del').onclick=()=>{
+    if(takes[i])URL.revokeObjectURL(takes[i].url);
+    invalidateCombined();takes[i]=null;au.style.display='none';sub.style.display='none';st.className='status';st.textContent='未収録';timer.textContent='00:00.0';updateProgress();
+  };
+});
+updateScriptSummary();updateProgress();
+}
+function setRowState(i,recording){
+  const div=scriptsEl.children[i];
+  div.querySelector('.btn-rec').disabled=recording;
+  div.querySelector('.btn-stop').disabled=!recording;
+  div.querySelector('.btn-rec').classList.toggle('recording',recording);
+  if(recording){div.querySelector('.btn-rec').textContent='● 録音中…';}else{div.querySelector('.btn-rec').textContent='● 録音';}
+}
+
+async function startRec(i){
+  if(recordingIdx!==-1 || combining || preparingMic || playingAll){gStatus.textContent='録音・結合・連続再生が終わってから開始してください';return;}
+  preparingMic=true;
+  try{
+    if(!stream){const ok=await initMic(micSelect.value);if(!ok)return;}
+    if(audioCtx.state==='suspended')await audioCtx.resume();
+  }finally{preparingMic=false;}
+  currentIdx=i;updateProgress();scrollToIdx(i);
+  invalidateCombined();chunks=[];recordingIdx=i;recStart=Date.now();
+  try{mediaRecorder=new MediaRecorder(stream);}
+  catch(e){gStatus.textContent='録音開始できません: '+e.message;recordingIdx=-1;return;}
+  mediaRecorder.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
+  mediaRecorder.onstop=()=>onStop(i);
+  mediaRecorder.start(250);
+  setRowState(i,true);
+  const div=scriptsEl.children[i];
+  const timer=div.querySelector('.timer');
+  clearInterval(recTimer);
+  recTimer=setInterval(()=>{timer.textContent=fmtTime(Date.now()-recStart);},100);
+  const stRec=div.querySelector('.status');stRec.className='status is-rec';stRec.textContent='録音中… セリフを読んでください';
+  gStatus.textContent=`パート ${i+1} 録音中…`;
+}
+function stopRec(){
+  if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();
+  clearInterval(recTimer);
+}
+function onStop(i){
+  clearInterval(recTimer);
+  setRowState(i,false);
+  const div=scriptsEl.children[i];
+  const blob=new Blob(chunks,{type:mediaRecorder.mimeType||'audio/webm'});
+  const url=URL.createObjectURL(blob);
+  const dur=Date.now()-recStart;
+  if(takes[i])URL.revokeObjectURL(takes[i].url);
+  takes[i]={blob,url,duration:dur};
+  const au=div.querySelector('audio');au.src=url;au.style.display='block';
+  div.querySelector('.sub-row').style.display='flex';
+  const stDone=div.querySelector('.status');stDone.className='status is-done';stDone.textContent=`収録済み (${fmtTime(dur)}) — 試聴してOKなら次へ`;
+  div.querySelector('.btn-dl').href=url;
+  div.querySelector('.btn-dl').download=`part${i+1}.webm`;
+  recordingIdx=-1;
+  gStatus.textContent=`パート ${i+1} 完了。次はパート ${Math.min(SCRIPTS.length,i+2)} です`;
+  // 自動で次へフォーカス
+  if(i+1<SCRIPTS.length){currentIdx=i+1;}
+  updateProgress();
+}
+
+// 結合 → WAV
+function encodeWAV(buffer){
+  const ch=buffer.numberOfChannels,sr=buffer.sampleRate,len=buffer.length*ch*2+44;
+  const ab=new ArrayBuffer(len),v=new DataView(ab);
+  const ws=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
+  ws(0,'RIFF');v.setUint32(4,len-8,true);ws(8,'WAVE');ws(12,'fmt ');v.setUint32(16,16,true);
+  v.setUint16(20,1,true);v.setUint16(22,ch,true);v.setUint32(24,sr,true);
+  v.setUint32(28,sr*ch*2,true);v.setUint16(32,ch*2,true);v.setUint16(34,16,true);
+  ws(36,'data');v.setUint32(40,len-44,true);
+  let off=44;
+  // interleave
+  const chans=[];for(let c=0;c<ch;c++)chans.push(buffer.getChannelData(c));
+  for(let i=0;i<buffer.length;i++)for(let c=0;c<ch;c++){let s=Math.max(-1,Math.min(1,chans[c][i]));v.setInt16(off,s<0?s*0x8000:s*0x7FFF,true);off+=2;}
+  return new Blob([ab],{type:'audio/wav'});
+}
+combineBtn.onclick=async()=>{
+  if(recordingIdx!==-1 || preparingMic || playingAll){finalStatus.textContent="録音・連続再生が終わってから結合してください";return;}
+  const idxs=takes.map((t,i)=>t?i:-1).filter(i=>i>=0);
+  if(!idxs.length){finalStatus.textContent='まだ録音がありません。先に録音してください';return;}
+  if(idxs.length<SCRIPTS.length)finalStatus.textContent=`注意: ${SCRIPTS.length-idxs.length}パート未収録。ある分だけで結合します`;
+  combining=true;combineBtn.disabled=true;finalStatus.textContent='結合中… デコードしています';
+  try{
+    const AC=new (window.AudioContext||window.webkitAudioContext)();
+    const silenceSec=parseFloat(document.getElementById('silence').value||'0');
+    // デコード → モノラル化
+    const decoded=[];
+    for(const i of idxs){
+      const ab=await takes[i].blob.arrayBuffer();
+      const buf=await AC.decodeAudioData(ab.slice(0));
+      // mix to mono
+      let mono;
+      if(buf.numberOfChannels===1)mono=buf.getChannelData(0);
+      else{mono=new Float32Array(buf.length);for(let c=0;c<buf.numberOfChannels;c++){const d=buf.getChannelData(c);for(let n=0;n<buf.length;n++)mono[n]+=d[n]/buf.numberOfChannels;}}
+      decoded.push({sr:buf.sampleRate,data:mono});
+    }
+    const outSR=AC.sampleRate;
+    // リサンプル（簡易線形）して結合
+    function resample(data,fromSR,toSR){
+      if(fromSR===toSR)return data;
+      const ratio=fromSR/toSR,newLen=Math.floor(data.length/ratio);
+      const out=new Float32Array(newLen);
+      for(let i=0;i<newLen;i++){const p=i*ratio,i0=Math.floor(p),f=p-i0;out[i]=data[i0]*(1-f)+(data[i0+1]||0)*f;}
+      return out;
+    }
+    const parts=decoded.map(d=>resample(d.data,d.sr,outSR));
+    const silLen=Math.floor(silenceSec*outSR);
+    let total=parts.reduce((a,p)=>a+p.length,0)+silLen*(parts.length-1);
+    const out=AC.createBuffer(1,total,outSR);
+    const od=out.getChannelData(0);
+    let pos=0;
+    parts.forEach((p,k)=>{od.set(p,pos);pos+=p.length;if(k<parts.length-1)pos+=silLen;});
+    const wav=encodeWAV(out);
+    invalidateCombined(); combinedBlob=wav;
+    const url=URL.createObjectURL(wav);combinedUrl=url;
+    finalAudio.src=url;finalAudio.style.display='block';
+    finalDl.href=url;finalDl.style.display='block';
+    finalDl.download='combined.wav';
+    const sec=(total/outSR).toFixed(1);
+    finalStatus.className='status is-done';finalStatus.textContent=`結合完了: ${idxs.length}パート / ${sec}秒 / ${(wav.size/1024).toFixed(0)}KB — 再生・ダウンロードできます`;
+    AC.close();
+  }catch(e){finalStatus.className='status';finalStatus.textContent='結合失敗: '+e.message;}
+  combining=false;combineBtn.disabled=false;
+};
+
+// 仮プレビュー連続再生
+document.getElementById('playAll').onclick=async()=>{
+  if(recordingIdx!==-1 || preparingMic || combining || playingAll)return;
+  const idxs=takes.map((t,i)=>t?i:-1).filter(i=>i>=0);
+  if(!idxs.length){finalStatus.textContent='再生できるテイクがありません';return;}
+  playingAll=true;
+  try{for(const i of idxs){
+    scrollToIdx(i);currentIdx=i;updateProgress();
+    const au=scriptsEl.children[i].querySelector('audio');
+    await new Promise((resolve,reject)=>{au.currentTime=0;au.onended=resolve;au.onpause=resolve;au.onerror=reject;au.play().catch(reject);});
+  }}catch(e){finalStatus.textContent="再生を開始できませんでした";}finally{playingAll=false;}
+};
+document.getElementById('clearAll').onclick=()=>{
+  if(recordingIdx!==-1 || preparingMic || combining || playingAll){gStatus.textContent='録音・結合・連続再生が終わってから消去してください';return;}
+  invalidateCombined();
+  takes.forEach((t,i)=>{if(t)URL.revokeObjectURL(t.url);});
+  takes=new Array(SCRIPTS.length).fill(null);
+  document.querySelectorAll('.card.part').forEach(d=>{
+    d.querySelector('audio').style.display='none';
+    d.querySelector('.sub-row').style.display='none';
+    d.querySelector('.status').className='status';d.querySelector('.status').textContent='未収録';
+    d.querySelector('.timer').textContent='00:00.0';
+  });
+  updateProgress();
+};
+
+function updateScriptSummary(){
+  const total=SCRIPTS.reduce((sum,part)=>sum+part.text.length,0);
+  document.getElementById('scriptSummary').textContent=`現在：${scriptTitle} / ${SCRIPTS.length}パート / 本文約${total}文字。パート名は読まず、本文だけ録音してください。申請できる音声は合計120秒以内です。`;
+}
+function parseScript(source){
+  if(source.length>262144)throw new Error('JSONは256KB以内にしてください。');
+  let text=source.trim().replace(/^\uFEFF/,'');
+  const fence=text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+  if(fence)text=fence[1];
+  let value;
+  try{value=JSON.parse(text);}catch(e){throw new Error('JSONを読み込めません。AIのJSON出力だけを貼り付けてください。');}
+  if(!value || Array.isArray(value) || value.version!==1 || typeof value.title!=='string' || !value.title.trim() || value.title.length>120){
+    throw new Error('version: 1 と、120文字以内の title（台本名）が必要です。');
+  }
+  if(!Array.isArray(value.parts) || value.parts.length<1 || value.parts.length>40)throw new Error('parts は1〜40パートの配列にしてください。');
+  const parts=value.parts.map((part,index)=>{
+    if(!part || typeof part.label!=='string' || !part.label.trim() || part.label.length>80 || typeof part.text!=='string' || !part.text.trim() || part.text.length>1500){
+      throw new Error(`パート${index+1}：label（1〜80文字）と text（1〜1500文字）が必要です。`);
+    }
+    return {label:part.label.trim(),text:part.text.trim()};
+  });
+  if(parts.reduce((sum,part)=>sum+part.text.length,0)>12000)throw new Error('台本の本文合計は12000文字以内にしてください。');
+  return {version:1,title:value.title.trim(),parts};
+}
+function loadScript(value){
+  if(recordingIdx!==-1 || preparingMic || combining || playingAll){
+    throw new Error('録音・結合・連続再生が終わってから台本を変更してください。');
+  }
+  if((takes.some(Boolean)||combinedBlob) && !window.confirm('台本を変更すると現在の録音と結合音声を消去します。変更しますか？'))return false;
+  scriptsEl.querySelectorAll('audio').forEach(audio=>audio.pause());
+  finalAudio.pause();
+  takes.forEach(take=>{if(take)URL.revokeObjectURL(take.url);});
+  invalidateCombined();
+  SCRIPTS=value.parts.map(part=>({...part}));scriptTitle=value.title;
+  takes=new Array(SCRIPTS.length).fill(null);currentIdx=0;
+  finalStatus.textContent='全パート録音後に結合できます（一部だけでも可）';
+  renderScripts();
+  document.getElementById('scriptNotice').textContent=`「${scriptTitle}」を読み込みました。`;
+  return true;
+}
+function reportScriptError(error){document.getElementById('scriptNotice').textContent=error.message;}
+for(const [key,preset] of Object.entries(PRESETS)){
+  const option=document.createElement('option');option.value=key;option.textContent=`${preset.title}（${preset.parts.length}パート）`;
+  document.getElementById('presetSelect').append(option);
+}
+document.getElementById('applyPreset').onclick=()=>{
+  try{const preset=PRESETS[document.getElementById('presetSelect').value];loadScript({version:1,...preset});}catch(error){reportScriptError(error);}
+};
+document.getElementById('loadScriptText').onclick=()=>{
+  try{loadScript(parseScript(document.getElementById('scriptJson').value));}catch(error){reportScriptError(error);}
+};
+document.getElementById('loadScriptFile').onclick=async()=>{
+  try{
+    const file=document.getElementById('scriptFile').files[0];
+    if(!file)throw new Error('JSONファイルを選択してください。');
+    if(file.size>262144)throw new Error('JSONは256KB以内にしてください。');
+    loadScript(parseScript(await file.text()));
+  }catch(error){reportScriptError(error);}
+};
+document.getElementById('exportScript').onclick=()=>{
+  try{
+    const parts=SCRIPTS.map((part,index)=>({label:part.label,text:scriptsEl.children[index].querySelector('.text').innerText}));
+    const value=parseScript(JSON.stringify({version:1,title:scriptTitle,parts}));
+    const blob=new Blob([JSON.stringify(value,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);const anchor=document.createElement('a');
+    anchor.href=url;anchor.download='voice-script.json';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+    document.getElementById('scriptNotice').textContent='現在の台本をJSONで保存しました。本文の編集も反映しています。';
+  }catch(error){reportScriptError(error);}
+};
+function updatePrompt(){
+  const parts=Number(document.getElementById('promptParts').value);
+  const seconds=Number(document.getElementById('promptSeconds').value);
+  const output=document.getElementById('aiPrompt');
+  if(!Number.isInteger(parts)||parts<1||parts>40||!Number.isInteger(seconds)||seconds<10||seconds>110){
+    output.value='パート数は1〜40、収録時間は10〜110秒の整数で指定してください。';
+    document.getElementById('copyPrompt').disabled=true;return;
+  }
+  document.getElementById('copyPrompt').disabled=false;
+  const theme=document.getElementById('promptTheme').value.trim()||'自然な日本語の日常会話';
+  const example=JSON.stringify({version:1,title:'台本の名前',parts:[{label:'パートの名前・読み方の目安',text:'ここに実際に読む文章を入れる。'}]},null,2);
+  output.value=`私が自分の声を録音し、話者クローン用の参照音声を作るための、日本語のオリジナル台本を作成してください。
+
+希望：${theme}
+パート数：ちょうど${parts}パート
+収録時間の目安：合計${seconds}秒（パート間の短い無音も含む）
+
+条件：
+- 本文全体は約${Math.round(seconds*4)}文字を目安に、自然な速さで読み切れる短さにしてください。収録は120秒以内に収めたいです。
+- 各パートを単独で読める自然な文章にしてください。日本語の音の偏りを避け、希望に合う範囲で語彙・文末・抑揚に変化をつけてください。
+- label にはパート名や読み方の目安を、text には実際に読む本文だけを入れてください。text に演技指示・見出し・ルビを入れないでください。
+- 台本はオリジナルとし、既存作品の引用や特定の人物のものまね指定は含めないでください。
+
+出力形式：以下の構造のJSONオブジェクトを1つだけ出力してください。説明、Markdown、コードフェンスは不要です。
+${example}
+
+version は数値の1、title は1〜120文字、parts はちょうど${parts}要素の配列です。各要素の label は1〜80文字、text は1〜1500文字の文字列です。本文の合計は12000文字以内にしてください。JSON内の改行や引用符は正しくエスケープしてください。`;
+}
+for(const id of ['promptTheme','promptParts','promptSeconds'])document.getElementById(id).addEventListener('input',updatePrompt);
+document.getElementById('copyPrompt').onclick=async()=>{
+  const output=document.getElementById('aiPrompt');const status=document.getElementById('promptNotice');
+  try{await navigator.clipboard.writeText(output.value);status.textContent='依頼文をコピーしました。AIに貼り付け、返されたJSONを台本として読み込んでください。';}
+  catch(error){output.focus();output.select();status.textContent='自動コピーできませんでした。選択した依頼文を手動でコピーしてください。';}
+};
+updatePrompt();
+
+if(!navigator.mediaDevices?.getUserMedia){gStatus.textContent='このブラウザは録音に対応していません';}
+else{loadMics();gStatus.textContent='●録音を押すとマイクの許可を確認します';}
+document.getElementById('requestForm').onsubmit=async(event)=>{
+  event.preventDefault();
+  const status=document.getElementById('requestStatus');
+  const button=document.getElementById('requestSubmit');
+  const selected=document.getElementById('requestFile').files[0];
+  const audio=selected||combinedBlob;
+  if(!audio){status.textContent='録音を結合するか、音声ファイルを選択してください';return;}
+  if(audio.size>20*1024*1024){status.textContent='音声は20MB以内にしてください';return;}
+  if(recordingIdx!==-1){status.textContent='録音を停止してから申請してください';return;}
+  const form=new FormData();
+  form.append('name',document.getElementById('voiceName').value.trim());
+  form.append('requester',document.getElementById('requesterName').value.trim());
+  form.append('note',document.getElementById('requestNote').value.trim());
+  form.append('file',audio,selected?selected.name:'combined.wav');
+  button.disabled=true;status.textContent='音量を調整して申請しています…';
+  try{
+    const response=await fetch('/api/voice-requests',{method:'POST',body:form,credentials:'same-origin'});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.error||'申請に失敗しました');
+    status.textContent=`申請を送信しました。管理者の承認をお待ちください。申請ID: ${data.id}`;
+  }catch(error){status.textContent=error.message;}
+  finally{button.disabled=false;}
+};
+renderScripts();
+window.addEventListener('pagehide',()=>{if(stream)stream.getTracks().forEach(track=>track.stop());if(audioCtx)audioCtx.close();});
+updateProgress();
+</script>
+</body>
+</html>

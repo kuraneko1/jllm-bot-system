@@ -1,0 +1,42 @@
+profile: dashboard
+plugins:
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  provider.tts.voicevox:
+    enabled: true
+    instances:
+      local:
+        url: http://127.0.0.1:50021
+  tts.direct:
+    enabled: true
+  dictionary.reading:
+    enabled: true
+  provider.llm.sarashina:
+    enabled: true
+    instances:
+      main:
+        api_url: http://127.0.0.1:8082
+        model: sarashina3-mini
+  llm.router:
+    enabled: true
+    config:
+      backend: sarashina
+      sarashina:
+        api_url: http://127.0.0.1:8082
+        model: sarashina3-mini
+  store.sessions:
+    enabled: true
+  web.dashboard:
+    enabled: true
+    config:
+      host: 127.0.0.1
+      port: 0
+      public_url: http://127.0.0.1:8765
+bindings:
+  llm.router:
+    llm.provider:
+      - provider.llm.sarashina/main
+  tts.direct:
+    tts.provider: provider.tts.voicevox/local

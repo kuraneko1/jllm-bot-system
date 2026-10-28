@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>読み上げエンジン</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2026; --muted: #667085; --line: #e3e6eb;
+    --accent: #2f6fde; --ok: #1f9d55; --bad: #d64545; --warn: #b7791f;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171b; --card: #1e2127; --text: #e8eaed; --muted: #9aa3b2; --line: #2e333b;
+      --accent: #6c9cf0; --ok: #43c47a; --bad: #f07070; --warn: #e0b04f;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+         background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+         padding: 12px 14px; margin-bottom: 14px; }
+  .bar .grow { flex: 1; min-width: 180px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 12px 14px; margin-bottom: 10px; display: grid;
+          grid-template-columns: 1fr auto; gap: 8px 16px; align-items: center; }
+  .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .name { font-weight: 600; }
+  .meta { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .err { color: var(--bad); font-size: 12px; grid-column: 1 / -1; word-break: break-all; }
+  .tags { display: inline-flex; gap: 6px; margin-left: 6px; vertical-align: middle; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .tag.on { color: var(--accent); border-color: var(--accent); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: var(--ok); }
+  .dot.down { background: var(--bad); }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+           border-radius: 7px; padding: 5px 11px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 5px 10px; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.sel { background: var(--accent); color: #fff; }
+  label.switch { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  #msg { min-height: 1.5em; color: var(--muted); font-size: 13px; }
+  #msg.bad { color: var(--bad); }
+  .login { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  a { color: var(--accent); }
+  @media (max-width: 560px) {
+    .card { grid-template-columns: 1fr; }
+    .controls { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>読み上げエンジン</h1>
+  <p class="sub">使うエンジン・配信方式（stream = 届いた順に鳴らす / wav = 全部待ってから鳴らす）・自動退避を切り替えます。</p>
+
+  <div id="login" class="login" hidden>
+    ログインが必要です。<a href="/">ダッシュボード</a>でログインしてから、このページを開き直してください。
+  </div>
+
+  <div id="app" hidden>
+    <div class="bar">
+      <div class="grow">
+        <div>使用中: <b id="active">-</b></div>
+        <div class="meta">優先: <span id="preferred">-</span> ・ 確認間隔 <span id="interval">-</span> 秒</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="failover"> 自動退避</label>
+      <button id="check">今すぐ確認</button>
+    </div>
+    <div id="list"></div>
+    <div id="msg"></div>
+  </div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let busy = false;
+
+  function say(text, bad = false) {
+    $("msg").textContent = text || "";
+    $("msg").className = bad ? "bad" : "";
+  }
+
+  async function api(method, path, body) {
+    const response = await fetch(path, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "same-origin",
+    });
+    if (response.status === 401) {
+      $("app").hidden = true;
+      $("login").hidden = false;
+      throw new Error("login");
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  }
+
+  function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (key === "class") node.className = value;
+      else if (key === "text") node.textContent = value;
+      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+      else if (value !== false && value != null) node.setAttribute(key, value === true ? "" : value);
+    }
+    for (const child of children) if (child) node.append(child);
+    return node;
+  }
+
+  function render(data) {
+    if (!data.router) {
+      $("app").hidden = false;
+      $("list").replaceChildren(el("div", { class: "login", text: `単一エンジン構成です（${data.describe || "-"}）。切り替えはできません。` }));
+      return;
+    }
+    $("login").hidden = true;
+    $("app").hidden = false;
+    const label = (id) => (data.backends.find((b) => b.id === id) || {}).display || id;
+    $("active").textContent = label(data.active);
+    $("preferred").textContent = label(data.preferred) + (data.active !== data.preferred ? "（退避中）" : "");
+    $("interval").textContent = data.health_seconds;
+    $("failover").checked = !!data.failover;
+
+    $("list").replaceChildren(...data.backends.map((b) => {
+      const tags = el("span", { class: "tags" }, [
+        b.active ? el("span", { class: "tag on", text: "使用中" }) : null,
+        b.preferred ? el("span", { class: "tag on", text: "優先" }) : null,
+      ]);
+      const seg = el("div", { class: "seg", title: b.stream_capable ? "" : "このエンジンはストリーミング非対応（常に wav）" }, ["stream", "wav"].map((mode) =>
+        el("button", {
+          text: mode,
+          class: b.stream_mode === mode ? "sel" : "",
+          disabled: !b.stream_capable,
+          onclick: () => act(() => api("POST", "/api/tts/stream", { id: b.id, mode }), `${b.display}: ${mode}`),
+        })));
+      const use = el("button", {
+        class: b.preferred ? "" : "primary",
+        text: b.preferred ? "優先中" : "これを使う",
+        disabled: b.preferred && b.active,
+        onclick: () => act(() => api("POST", "/api/tts/active", { id: b.id }), `${b.display} に切り替えました`),
+      });
+      return el("div", { class: "card" + (b.active ? " active" : "") }, [
+        el("div", {}, [
+          el("div", {}, [el("span", { class: "dot" + (b.healthy ? "" : " down"), title: b.healthy ? "疎通OK" : "不調" }),
+                        el("span", { class: "name", text: b.display }), tags]),
+          el("div", { class: "meta", text: `${b.id} ・ ${b.kind} ・ ${b.url || "-"}` }),
+        ]),
+        el("div", { class: "controls" }, [seg, use]),
+        !b.healthy && b.error ? el("div", { class: "err", text: b.error }) : null,
+      ]);
+    }));
+  }
+
+  async function act(run, done) {
+    if (busy) return;
+    busy = true;
+    document.body.style.cursor = "progress";
+    try {
+      render(await run());
+      say(done);
+    } catch (error) {
+      if (error.message !== "login") say(error.message, true);
+    } finally {
+      busy = false;
+      document.body.style.cursor = "";
+    }
+  }
+
+  async function refresh() {
+    if (busy) return;
+    try { render(await api("GET", "/api/tts/backends")); }
+    catch (error) { if (error.message !== "login") say(error.message, true); }
+  }
+
+  $("failover").addEventListener("change", (event) =>
+    act(() => api("POST", "/api/tts/failover", { enabled: event.target.checked }),
+        `自動退避を${event.target.checked ? "入" : "切"}にしました`));
+  $("check").addEventListener("click", () => act(() => api("POST", "/api/tts/check"), "確認しました"));
+
+  refresh();
+  setInterval(refresh, 10000);
+})();
+</script>
+</body>
+</html>

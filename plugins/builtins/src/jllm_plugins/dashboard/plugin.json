@@ -1,0 +1,18 @@
+{
+  "id": "web.dashboard",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.dashboard.plugin:Plugin",
+  "provides": [{"capability": "web.dashboard", "version": 1}],
+  "requires": [
+    {"capability": "storage.local", "version": 1, "cardinality": "one"},
+    {"capability": "dictionary.reading", "version": 1, "cardinality": "one"},
+    {"capability": "tts.synthesis", "version": 1, "cardinality": "one"},
+    {"capability": "llm.chat", "version": 1, "cardinality": "one"},
+    {"capability": "store.sessions", "version": 1, "cardinality": "one"}
+  ],
+  "optional": [{"capability": "feature.reader", "version": 1, "cardinality": "optional_one"}],
+  "permissions": ["network.listen", "storage.own", "network.llm"],
+  "config_schema": "config.schema.json",
+  "multi_instance": false
+}

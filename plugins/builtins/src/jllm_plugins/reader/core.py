@@ -1432,7 +1432,7 @@ class Plugin:
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)
         ctx.scope.add(remove)
-        return {}
+        return {"feature.reader": self.cog}
 
     async def start(self):
         pass

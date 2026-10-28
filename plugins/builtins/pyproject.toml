@@ -9,6 +9,7 @@ dependencies = [
     "aiohttp>=3.9,<4",
     "jllm-tts-contract",
     "beautifulsoup4>=4.13,<5",
+    "webauthn>=2.2,<3",
 ]
 
 [tool.uv.sources]
@@ -51,6 +52,7 @@ jllm-tts-contract = { workspace = true }
 "feature.conversation" = "jllm_plugins.conversation:conversation_plugin.json"
 "feature.talk-log" = "jllm_plugins.conversation:talk_log_plugin.json"
 "feature.translation" = "jllm_plugins.translation:plugin.json"
+"web.dashboard" = "jllm_plugins.dashboard:plugin.json"
 
 [build-system]
 requires = ["hatchling"]
