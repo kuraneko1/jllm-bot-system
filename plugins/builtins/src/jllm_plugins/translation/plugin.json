@@ -1,0 +1,23 @@
+{
+  "id": "feature.translation",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.translation.plugin:Plugin",
+  "provides": [],
+  "requires": [
+    {"capability": "storage.local", "version": 1, "cardinality": "one"},
+    {"capability": "discord.gateway", "version": 1, "cardinality": "one"},
+    {"capability": "llm.chat", "version": 1, "cardinality": "one"},
+    {"capability": "store.sessions", "version": 1, "cardinality": "one"},
+    {"capability": "feature.talk-log", "version": 1, "cardinality": "one"},
+    {"capability": "policy.restrictions", "version": 1, "cardinality": "one"}
+  ],
+  "optional": [
+    {"capability": "llm.controller", "version": 1, "cardinality": "optional_one"},
+    {"capability": "feature.conversation", "version": 1, "cardinality": "optional_one"},
+    {"capability": "feature.kitasan", "version": 1, "cardinality": "optional_one"}
+  ],
+  "permissions": ["discord.commands", "discord.messages.read", "discord.messages.send"],
+  "config_schema": "config.schema.json",
+  "multi_instance": false
+}

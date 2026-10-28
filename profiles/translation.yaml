@@ -1,0 +1,47 @@
+profile: translation
+plugins:
+  adapter.discord:
+    enabled: true
+    critical: true
+    config:
+      token_env: DISCORD_TOKEN
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  provider.llm.sarashina:
+    enabled: true
+    instances:
+      main:
+        api_url: http://127.0.0.1:8082
+        model: sarashina3-mini
+  llm.router:
+    enabled: true
+    config:
+      backend: sarashina
+      sarashina:
+        api_url: http://127.0.0.1:8082
+        model: sarashina3-mini
+  llm.controller:
+    enabled: true
+  store.sessions:
+    enabled: true
+  web.safe-fetch:
+    enabled: true
+  feature.conversation:
+    enabled: true
+  policy.restrictions:
+    enabled: true
+  feature.kitasan:
+    enabled: true
+  feature.talk-log:
+    enabled: true
+  feature.translation:
+    enabled: true
+    config:
+      allowed_channel_ids: []
+      talk_mention_gate: open
+bindings:
+  llm.router:
+    llm.provider:
+      - provider.llm.sarashina/main

@@ -231,7 +231,11 @@ class TranslationClient:
     async def translate(self, text):
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
-        key = await asyncio.to_thread(Path(self.key_file).read_text) if self.key_file else ""
+        key = (
+            (await asyncio.to_thread(Path(self.key_file).read_text)).strip()
+            if self.key_file
+            else ""
+        )
         headers = {"Authorization": f"Bearer {key}"} if key else {}
         payload = {
             "model": "jllm-translation",
@@ -259,7 +263,11 @@ class TranslationClient:
     async def post(self, endpoint, payload):
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
-        key = await asyncio.to_thread(Path(self.key_file).read_text) if self.key_file else ""
+        key = (
+            (await asyncio.to_thread(Path(self.key_file).read_text)).strip()
+            if self.key_file
+            else ""
+        )
         async with self.session.post(
             self.base_url + endpoint,
             json=payload,
@@ -380,7 +388,11 @@ class SarashinaClient:
 
     async def _headers(self):
         headers = {"Content-Type": "application/json"}
-        key = await asyncio.to_thread(Path(self.key_file).read_text) if self.key_file else ""
+        key = (
+            (await asyncio.to_thread(Path(self.key_file).read_text)).strip()
+            if self.key_file
+            else ""
+        )
         if key:
             headers["Authorization"] = f"Bearer {key}"
         return headers

@@ -50,6 +50,7 @@ jllm-tts-contract = { workspace = true }
 "web.safe-fetch" = "jllm_plugins.conversation:web_plugin.json"
 "feature.conversation" = "jllm_plugins.conversation:conversation_plugin.json"
 "feature.talk-log" = "jllm_plugins.conversation:talk_log_plugin.json"
+"feature.translation" = "jllm_plugins.translation:plugin.json"
 
 [build-system]
 requires = ["hatchling"]

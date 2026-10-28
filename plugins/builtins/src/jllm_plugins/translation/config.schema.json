@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "allowed_channel_ids": {"type": "array", "items": {"type": "integer"}, "default": []},
+    "owner_id": {"type": "integer", "default": 0, "minimum": 0},
+    "talk_call_suffix": {"type": "string", "default": ""},
+    "talk_mention_gate": {"type": "string", "enum": ["open", "session"], "default": "open"},
+    "talk_model": {"type": "string", "default": ""},
+    "talk_open_channels": {"type": "array", "items": {"type": "integer"}, "default": []},
+    "talk_session_seconds": {"type": "number", "default": 1800, "minimum": 0},
+    "talk_system_prompt_file": {"type": "string", "default": ""},
+    "tts_switch_user_ids": {"type": "array", "items": {"type": "integer"}, "default": []}
+  },
+  "additionalProperties": false
+}

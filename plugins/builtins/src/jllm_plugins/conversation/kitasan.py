@@ -17,7 +17,7 @@ import discord
 from jllm_plugins.llm import prompts
 
 KITASAN_ENABLED = True
-KITASAN_WORDS = ("今北産業", "今北", "きたさん")
+KITASAN_WORDS = ("今北産業",)
 KITASAN_MESSAGES = 100
 KITASAN_ITEM_CHARS = 300
 KITASAN_MAX_CHARS = 4000
