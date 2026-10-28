@@ -14,7 +14,14 @@
     "default_speaker": {"type": "integer", "default": 1},
     "bookmark_reaction": {"type": "string", "default": ""},
     "bookmark_notify": {"type": "boolean", "default": true},
-    "tts_switch_user_ids": {"type": "array", "items": {"type": "integer"}, "default": []}
+    "tts_switch_user_ids": {"type": "array", "items": {"type": "integer"}, "default": []},
+    "dashboard_url": {"type": "string", "default": "http://127.0.0.1:8765", "minLength": 1},
+    "forced_voices_path": {"type": "string", "default": "data/forced_voices.json", "minLength": 1},
+    "user_voices_path": {"type": "string", "default": "data/user_voices.json", "minLength": 1},
+    "vc_announcement_voice": {"type": "string", "default": "clone こしあん", "minLength": 1},
+    "vc_announcement_cache_dir": {"type": "string", "default": "data/join_voice", "minLength": 1},
+    "vc_announcement_cache_limit": {"type": "integer", "default": 128, "minimum": 1},
+    "vc_announcement_history_path": {"type": "string", "default": "data/vc_announcements.json", "minLength": 1}
   },
   "additionalProperties": false
 }

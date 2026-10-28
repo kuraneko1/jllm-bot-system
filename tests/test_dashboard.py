@@ -13,7 +13,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 WEBCHAT_PER_IP = 12
 from jllm_plugins.conversation.sessions import SessionStore
-from jllm_plugins.dashboard.dashboard import ReadingDashboard
+from jllm_plugins.dashboard.dashboard import DashboardConfig, ReadingDashboard
 from jllm_plugins.dictionaries.dictionary import SoundDictionary
 from jllm_plugins.dictionaries.readings import ReadingDictionary
 from jllm_plugins.tts_router.router import BackendSpec, TTSRouter
@@ -83,6 +83,11 @@ class ReadingDashboardTests(unittest.IsolatedAsyncioTestCase):
             reader=self.reader,
             sessions=self.sessions,
             password_file=str(self.password_path),
+            # 音量カーブの保存先を一時ディレクトリへ（既定 data/ を触らない）
+            config=DashboardConfig(
+                duck_curve_path=str(root / "duck_curve.json"),
+                webchat_dir=str(root / "webchat"),
+            ),
         )
         self.client = TestClient(TestServer(self.dashboard.app))
         await self.client.start_server()

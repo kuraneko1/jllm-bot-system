@@ -14,6 +14,7 @@
 | Phase 6: 独立機能 | 実装・互換/実画像検証済み | Miq、Umigame、Anima、D1、Playground。実フォントのMiq生成も確認 |
 | 本番 data 移行 | 未着手 | 実 data の走査、移行、逆変換、rollback は未実施 |
 | 実 Discord・実音声 | 未検証 | 現在の検証は mock・fixture・clean install が中心 |
+| 最終互換監査 | 自動検証済み | 旧 tests の追加移植を含む1129件＋builtins 11件が成功。Ruff、wheel clean install、profile 検証も完了 |
 
 ## 旧環境の baseline
 

@@ -633,7 +633,7 @@ class RestrictView(discord.ui.View):
         if self.selected_user is None:
             return frozenset()
 
-        return self.cog.restrictions.flags(self.guild_id, self.selected_user)
+        return self.cog._restriction_store().flags(self.guild_id, self.selected_user)
 
     def _refresh(self):
         """選んでいる人の状態をボタンに反映する。"""
@@ -681,7 +681,7 @@ class RestrictView(discord.ui.View):
                 inline=False,
             )
 
-        current = self.cog.restrictions.guild_entries(self.guild_id)
+        current = self.cog._restriction_store().guild_entries(self.guild_id)
         lines = [
             f"{self._member_label(user_id)}: " + "、".join(LABELS[feature] for feature in flags)
             for user_id, flags in current.items()
@@ -731,7 +731,7 @@ class RestrictView(discord.ui.View):
                 return
 
             blocked = feature in self._flags()
-            self.cog.restrictions.set_flag(
+            self.cog._restriction_store().set_flag(
                 self.guild_id,
                 self.selected_user,
                 feature,
@@ -760,7 +760,7 @@ class RestrictView(discord.ui.View):
             )
             return
 
-        self.cog.restrictions.clear(self.guild_id, self.selected_user)
+        self.cog._restriction_store().clear(self.guild_id, self.selected_user)
         logger.info("ユーザー制限 %s: %s をすべて解除", self.guild_id, self.selected_user)
         self._refresh()
         await interaction.response.edit_message(embed=self.embed(), view=self)

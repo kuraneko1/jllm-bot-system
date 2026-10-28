@@ -116,8 +116,11 @@ class BackendFactoryTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        llm_backend.configure_state(Path(self.directory.name) / "llm_backend.json")
+        # configure_state() は _reset_config() が消すので、リセット之后再設定する。
+        # 旧 repo の config.LLM_BACKEND_PATH patch と同じく既定（data/）へ触らせない。
         llm_backend._reset_config()
+        self.addCleanup(llm_backend._reset_config)
+        llm_backend.configure_state(Path(self.directory.name) / "llm_backend.json")
         self.addCleanup(llm_backend._forget)
 
     def test_atmos_builds_the_z170_client_without_a_process(self):

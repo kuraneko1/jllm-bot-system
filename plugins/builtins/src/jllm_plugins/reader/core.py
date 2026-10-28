@@ -2,12 +2,15 @@ import asyncio
 import io
 import json
 import logging
+import math
 import re
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import discord
 from discord import app_commands
@@ -25,11 +28,13 @@ from jllm_plugins.dictionaries.dictionary import transcode_to_wav
 from jllm_plugins.ducking import VOICE_RECV_AVAILABLE, voice_recv
 from jllm_plugins.imagegen.control import NoImageGenController
 from jllm_plugins.imagegen.service import ImageGenError
+from jllm_plugins.llm import llm_backend
 from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
 from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
 from jllm_plugins.tts_lifecycle.service import switch_message
 from jllm_plugins.tts_router.router import TTSRouter
+from jllm_plugins.voice_settings.join_voice import JoinVoiceCache
 from jllm_plugins.vram_control.service import NoVramController, VramControlError, vram_summary
 
 from .media import HtmlApprovalView, MediaApprovalView, SoundApprovalView
@@ -132,7 +137,7 @@ async def connect_voice(channel, cls=None):
     return await channel.connect()
 
 
-@dataclass(frozen=True)
+@dataclass
 class ReaderConfig:
     allowed_channel_ids: frozenset[int] = frozenset()
     global_reaction_words: tuple[str, ...] = ()
@@ -149,12 +154,31 @@ class ReaderConfig:
     bookmark_notify: bool = True
     tts_switch_user_ids: frozenset[int] = frozenset()
     toggles_path: str = "data/toggles.json"
+    dashboard_url: str = "http://127.0.0.1:8765"
+    forced_voices_path: str = "data/forced_voices.json"
+    user_voices_path: str = "data/user_voices.json"
+    vc_announcement_voice: str = "clone こしあん"
+    vc_announcement_cache_dir: str = "data/join_voice"
+    vc_announcement_cache_limit: int = 128
+    vc_announcement_history_path: str = "data/vc_announcements.json"
 
     def channel_allowed(self, channel_id: int) -> bool:
         return not self.allowed_channel_ids or channel_id in self.allowed_channel_ids
 
 
 class ReaderCog(commands.Cog):
+    def __new__(cls, *args, **kwargs):
+        self = super().__new__(cls)
+        self.config = ReaderConfig()
+        self.bot = None
+        self.readings = SimpleNamespace(apply=lambda text: text)
+        self.media_store = None
+        self.media = {}
+        self.media_dir = Path("media")
+        self.html_dir = Path("html")
+        self.toggles = {"img": True, "wav": True}
+        return self
+
     def __init__(
         self,
         bot,
@@ -202,28 +226,140 @@ class ReaderCog(commands.Cog):
         self.bookmark_rules = parse_emoji_spec(config.bookmark_reaction)
         self.players: dict[int, SpeechPlayer] = {}
         self.voice_entries = settings.voice_entries.entries
-        self.toggles = {"wav": config.wav_enabled}
+        self.toggles = {"img": True, "wav": config.wav_enabled}
 
     @property
     def user_voices(self):
+        if "settings" not in self.__dict__:
+            return self.__dict__.setdefault("_user_voices_override", {})
         return self.settings.user_voices.entries
 
+    @user_voices.setter
+    def user_voices(self, value):
+        if "settings" not in self.__dict__:
+            self.__dict__["_user_voices_override"] = dict(value)
+        else:
+            self.settings.user_voices.entries.clear()
+            self.settings.user_voices.entries.update(value)
+
+    def _load_user_voices(self):
+        if "settings" in self.__dict__:
+            return self.settings.user_voices.entries
+        try:
+            data = json.loads(Path(self.config.user_voices_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        self.user_voices = data if isinstance(data, dict) else {}
+        return self.user_voices
+
     def _save_user_voices(self):
-        self.settings.user_voices.save()
+        if "settings" in self.__dict__:
+            self.settings.user_voices.save()
+            return
+        path = Path(self.config.user_voices_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(self.user_voices, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     @property
     def forced_voices(self):
+        if "settings" not in self.__dict__:
+            return self.__dict__.setdefault("_forced_voices_override", {})
         return self.settings.forced_voices.entries
 
+    @forced_voices.setter
+    def forced_voices(self, value):
+        if "settings" not in self.__dict__:
+            self.__dict__["_forced_voices_override"] = dict(value)
+        else:
+            self.settings.forced_voices.entries.clear()
+            self.settings.forced_voices.entries.update(value)
+
+    def _load_forced_voices(self):
+        if "settings" in self.__dict__:
+            return self.settings.forced_voices.entries
+        try:
+            data = json.loads(Path(self.config.forced_voices_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        self.forced_voices = data if isinstance(data, dict) else {}
+        return self.forced_voices
+
     def _save_forced_voices(self):
-        self.settings.forced_voices.save()
+        if "settings" in self.__dict__:
+            self.settings.forced_voices.save()
+            return
+        path = Path(self.config.forced_voices_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(self.forced_voices, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def _join_cache(self):
+        if "settings" in self.__dict__:
+            return self.settings.join_cache
+        cache = self.__dict__.get("_join_voice")
+        if cache is None or cache.voice != self.config.vc_announcement_voice:
+            cache = JoinVoiceCache(
+                self.config.vc_announcement_cache_dir,
+                voice=self.config.vc_announcement_voice,
+                limit=self.config.vc_announcement_cache_limit,
+            )
+            self.__dict__["_join_voice"] = cache
+        return cache
+
+    def _load_voice_entries(self):
+        if "settings" in self.__dict__:
+            return self.settings.voice_entries.entries
+        try:
+            data = json.loads(
+                Path(self.config.vc_announcement_history_path).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        cutoff = time.time() - self.config.vc_announcement_cooldown_seconds
+        self.voice_entries = {
+            str(key): float(value)
+            for key, value in data.items()
+            if isinstance(value, (int, float)) and math.isfinite(value) and value >= cutoff
+        }
+        return self.voice_entries
+
+    def _read_mode(self):
+        if self.config.read_mode == "wav":
+            return "wav"
+        try:
+            return llm_backend.active_read_mode()
+        except Exception:
+            return self.config.read_mode
+
+    def _save_voice_history(self):
+        if "settings" in self.__dict__:
+            self.settings.voice_entries.entries = self.voice_entries
+            self.settings.voice_entries.save()
+            return
+        path = Path(self.config.vc_announcement_history_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.voice_entries, ensure_ascii=False), encoding="utf-8")
 
     @staticmethod
     def _user_key(guild_id: int, user_id: int) -> str:
         return f"{guild_id}:{user_id}"
 
+    def _restriction_store(self):
+        restrictions = getattr(self, "restrictions", None)
+        if restrictions is not None:
+            return restrictions
+        return getattr(getattr(self, "bot", None), "restrictions", None)
+
     def _restricted(self, message, feature: str) -> bool:
-        return self.restrictions.blocked(message.guild.id, message.author.id, feature)
+        restrictions = self._restriction_store()
+        if restrictions is None:
+            return False
+        return restrictions.blocked(message.guild.id, message.author.id, feature)
 
     async def _flatten_speakers(self):
         try:
@@ -245,13 +381,32 @@ class ReaderCog(commands.Cog):
 
     def effective_voice_for(self, guild_id: int, user_id: int):
         key = self._user_key(guild_id, user_id)
-        return self.settings.forced_voices.get(key) or self.settings.user_voices.get(key)
+        return self.forced_voices.get(key) or self.user_voices.get(key)
+
+    async def _voice_name(self, speaker):
+        if speaker is None:
+            return speaker
+        names = self.__dict__.setdefault("_voice_id_names", {})
+        if speaker not in names:
+            try:
+                voices = await self.tts.list_voices()
+            except Exception:
+                return speaker
+            for voice in voices:
+                names[voice.id] = voice.name
+        return names.get(speaker, speaker)
 
     async def tts_speed_for(self, speaker):
-        return self.settings.speeds.get(str(speaker))
+        name = await self._voice_name(speaker)
+        if "settings" in self.__dict__:
+            return self.settings.speeds.get(str(name))
+        return self.voice_speeds.get(str(name))
 
     async def tts_gain_for(self, speaker):
-        return self.settings.volumes.get(str(speaker))
+        name = await self._voice_name(speaker)
+        if "settings" in self.__dict__:
+            return self.settings.volumes.get(str(name))
+        return self.voice_volumes.get(str(name))
 
     def _mytalk_embed(self, guild_id: int, user_id: int, speakers):
         key = self._user_key(guild_id, user_id)
@@ -535,8 +690,9 @@ class ReaderCog(commands.Cog):
             return
         if await self._handle_media_registration(message):
             return
-        await self._send_media(message)
-        if "v100" in message.content.lower():
+        if self.config.global_reaction_words or self.media_store is not None or self.media:
+            await self._send_media(message)
+        if "v100" in self.config.global_reaction_words and "v100" in message.content.lower():
             await self._react_v100(message)
         player = self.players.get(message.guild.id)
         if (
@@ -610,7 +766,7 @@ class ReaderCog(commands.Cog):
             await self._react_skip(message)
         gain = await self.tts_gain_for(speaker_key)
         wav_blocked = self._restricted(message, "wav")
-        speak = self.config.read_mode != "wav"
+        speak = self._read_mode() != "wav"
         for chunk, chunk_speed, chunk_effects in pieces:
             for segment in self.dictionary.split(chunk):
                 if segment.kind == "sound":
@@ -662,7 +818,7 @@ class ReaderCog(commands.Cog):
             or after_id != player.voice_client.channel.id
             or player.closed
             or not player.voice_client.is_connected()
-            or self.config.read_mode == "wav"
+            or self._read_mode() == "wav"
         ):
             return
         now = time.time()
@@ -674,8 +830,7 @@ class ReaderCog(commands.Cog):
             if timestamp >= now - self.config.vc_announcement_cooldown_seconds
         }
         self.voice_entries[key] = now
-        self.settings.voice_entries.entries = self.voice_entries
-        self.settings.voice_entries.save()
+        self._save_voice_history()
         if previous is not None and now - previous <= self.config.vc_announcement_cooldown_seconds:
             return
         name = prepare_text(member.display_name, self.config.max_message_length)
@@ -683,29 +838,30 @@ class ReaderCog(commands.Cog):
             name = prepare_text(member.name, self.config.max_message_length)
         name = self.readings.apply(name)
         text = f"{name}さんが入室しました。"
-        cached = self.settings.join_cache.get(member.id, text)
-        speed = await self.tts_speed_for(self.settings.join_cache.voice)
-        volume = await self.tts_gain_for(self.settings.join_cache.voice)
+        join_cache = self._join_cache()
+        cached = join_cache.get(member.id, text)
+        speed = await self.tts_speed_for(join_cache.voice)
+        volume = await self.tts_gain_for(join_cache.voice)
         if cached is not None:
             player.enqueue_sound(cached, speed=speed, volume=volume)
             return
         speakers = await self._flatten_speakers()
-        if not any(name == self.settings.join_cache.voice for _, name in speakers):
-            logger.warning("入室案内話者が見つかりません: %s", self.settings.join_cache.voice)
+        if not any(name == join_cache.voice for _, name in speakers):
+            logger.warning("入室案内話者が見つかりません: %s", join_cache.voice)
             return
         if self.players.get(member.guild.id) is not player or player.closed:
             return
-        created = await self.settings.join_cache.get_or_create(
+        created = await join_cache.get_or_create(
             member.id,
             text,
             lambda value: self.tts.synthesize(
-                text=value, speaker_id=self.settings.join_cache.voice, speed=1.0
+                text=value, speaker_id=join_cache.voice, speed=1.0
             ),
         )
         if created is not None:
             player.enqueue_sound(created, speed=speed, volume=volume)
         else:
-            player.enqueue(text, self.settings.join_cache.voice, speed=speed, volume=volume)
+            player.enqueue(text, join_cache.voice, speed=speed, volume=volume)
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload):
@@ -799,6 +955,54 @@ class ReaderCog(commands.Cog):
             return await self.bot.fetch_user(user_id)
         except discord.HTTPException:
             return None
+
+    @app_commands.command(name="help", description="読み上げの使い方を表示します")
+    @app_commands.guild_only()
+    async def help(self, interaction):
+        await interaction.response.defer(ephemeral=True)
+        url = self.config.dashboard_url
+        lines = [
+            "## 読み上げBotの使い方",
+            f"[共通ボード：登録音声・辞書・GIFの閲覧／管理]({url}/)",
+            "閲覧はログイン不要。管理操作には**パスキー**が必要です（初回はログイン画面で登録）。",
+            "",
+            "### 読み上げ",
+            f"- {chr(96)}/join{chr(96)} — VCに参加して読み上げ開始",
+            "- /leave — 読み上げ停止・VC退出",
+            "- /mytalk — 自分の声・ミュートを選択し、**✅ 設定する**で確定",
+            "- /forcevoice — メンバーの声を強制変更（オーナーのみ。本人設定より優先）",
+            "- /emoji enabled: — 👅💋の読み上げを切り替え（既定は無効）",
+            "- 投稿の先頭に ;・: — **その投稿だけ**読み上げない",
+            "- s だけ送信 — 再生中の読み上げを停止",
+            (
+                "- f<数字> で倍速、rb・ec・ecl・ch・vi・lo・bs・pi・rv・lm・wd・ph・ex・kk・tc "
+                "で音声効果"
+            ),
+            "- (この部分だけ)ec3 で括弧内だけに適用。並べると順に重ねて掛かります",
+            f"- [実験場]({url}/?tab=playground) — 好きな文章に好きな効果を付けて試せます",
+            "- /umigame — ウミガメのスープ（質問は末尾 ??、推測は末尾 !!）",
+            "",
+            "### 辞書・音声の登録",
+            f"- [ボイスレコーダー]({url}/?tab=recorder) — 録音・結合・話者登録申請",
+            "- /dict add phrase: file: — 音声を登録。管理者以外は承認申請",
+            "- /reading add trigger: reading: — 読み方を登録",
+            "- /reading remove trigger: — 登録した読み方を削除",
+            "- GIF登録 — Botをメンションし、語句とGIFを添付",
+            "",
+            "### 画像生成・管理",
+            "- /translate — 翻訳・会話設定",
+            "- /llm status / /llm switch — 翻訳・会話のモデルを切替。atmos は辞書wavのみ",
+            "- /llm read mode: — 読み上げモードだけ変更",
+            "- 会話モード：Botへのメンション／リプで質問や要約を依頼",
+            "- Web要約 — @Bot URL 要約して",
+            "- /img prompt: — 画像を生成",
+            "- /wavplay enabled: — 辞書音声再生のオン・オフ",
+            "- /imggen enabled: — 画像生成サーバーの起動・停止",
+            "- /resettalk — 全員の個別話者設定をリセット",
+            "",
+            "enabled: は True／False。/wavplay・/imggen は省略すると現在の設定を表示します。",
+        ]
+        await interaction.followup.send("\n".join(lines)[:1900], ephemeral=True)
 
     @app_commands.command(
         name="bookmark", description="リアクションで保存した投稿の一覧を表示します（オーナーのみ）"
@@ -914,8 +1118,15 @@ class ReaderCog(commands.Cog):
         )
 
     def _rebuild_sound_dashboard(self):
-        # Web ダッシュボードの公開物は後続の web.host 側で生成する。
-        return None
+        # 旧静的ボードを残すと、辞書の削除済み音声まで公開されるため除去する。
+        sounds_dir = self.html_dir / "sounds"
+        try:
+            (sounds_dir / "index.html").unlink(missing_ok=True)
+            if sounds_dir.is_dir() and not any(sounds_dir.iterdir()):
+                sounds_dir.rmdir()
+            shutil.rmtree(self.html_dir / "audio", ignore_errors=True)
+        except OSError:
+            logger.exception("旧音声ボードの削除に失敗")
 
     async def _approve_sound(self, request_id: str) -> str:
         request = self.pending_sound.pop(request_id, None)
@@ -1301,6 +1512,12 @@ class ReaderCog(commands.Cog):
             logger.exception("承認者へのDM送信に失敗")
             return None
 
+    def _viewer_wrapper_html(self, title, user_id, site_id, data):
+        return self.html_store.viewer_wrapper_html(title, user_id, site_id, data)
+
+    async def _publish_html(self, request_id: str) -> str:
+        return self.html_store.publish(request_id)
+
     async def _approve_html(self, request_id: str) -> str:
         return self.html_store.publish(request_id)
 
@@ -1373,7 +1590,7 @@ class ReaderCog(commands.Cog):
             view.message = response
             return True
         if not config.require_approval or self._is_approver(message.author.id):
-            result = self.html_store.publish(request_id)
+            result = await self._publish_html(request_id)
             await message.reply(result, mention_author=False)
             return True
         view = HtmlApprovalView(self, request_id)
@@ -1461,7 +1678,10 @@ class ReaderCog(commands.Cog):
         return True
 
     async def _send_media(self, message: discord.Message, *, global_only: bool = False):
-        if self.media_store is None or self._restricted(message, "gif"):
+        if (
+            getattr(self, "media_store", None) is None
+            and not getattr(self, "media", None)
+        ) or self._restricted(message, "gif"):
             return
         content = URL_PATTERN.sub("", message.content).casefold()
         for trigger, filename in self.media.items():
@@ -1524,6 +1744,17 @@ class Plugin:
             bookmark_reaction=ctx.config.get("bookmark_reaction", ""),
             bookmark_notify=ctx.config.get("bookmark_notify", True),
             tts_switch_user_ids=frozenset(ctx.config.get("tts_switch_user_ids", [])),
+            dashboard_url=ctx.config.get("dashboard_url", "http://127.0.0.1:8765"),
+            forced_voices_path=ctx.config.get("forced_voices_path", "data/forced_voices.json"),
+            user_voices_path=ctx.config.get("user_voices_path", "data/user_voices.json"),
+            vc_announcement_voice=ctx.config.get("vc_announcement_voice", "clone こしあん"),
+            vc_announcement_cache_dir=ctx.config.get(
+                "vc_announcement_cache_dir", "data/join_voice"
+            ),
+            vc_announcement_cache_limit=ctx.config.get("vc_announcement_cache_limit", 128),
+            vc_announcement_history_path=ctx.config.get(
+                "vc_announcement_history_path", "data/vc_announcements.json"
+            ),
         )
         self.cog = ReaderCog(
             ctx.dependencies["discord.gateway"].bot,
