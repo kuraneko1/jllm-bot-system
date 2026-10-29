@@ -37,10 +37,12 @@ class PlaygroundError(Exception):
 
 
 class Playground:
-    def __init__(self, tts, dictionary, readings):
+    def __init__(self, tts, dictionary, readings, effects=None):
         self.tts = tts
         self.dictionary = dictionary
         self.readings = readings
+        #: ``speech.effects`` の service。無い場合は既定の IR パスを使う。
+        self.effects = effects
 
     def plan(self, text: str, speed: float = 1.0):
         """本文を (チャンク, 速度, 効果) に分解する。
@@ -119,7 +121,8 @@ class Playground:
 
         if effects:
             audio = await asyncio.to_thread(
-                SpeechPlayer._apply_effects, audio, effects
+                SpeechPlayer._apply_effects, audio, effects,
+                effect_service=self.effects,
             )
 
         return audio
@@ -136,7 +139,7 @@ class Playground:
             audio = adjusted
 
         if effects:
-            audio = SpeechPlayer._apply_effects(audio, effects)
+            audio = SpeechPlayer._apply_effects(audio, effects, effect_service=self.effects)
 
         return audio
 

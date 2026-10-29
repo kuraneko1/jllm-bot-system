@@ -74,6 +74,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         port: int = 8765,
         public_url: str | None = None,
         require_existing_passkey: bool = False,
+        effects=None,
         config=None,
     ):
         self.config = config or DashboardConfig()
@@ -101,7 +102,8 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         # 実験場。ログイン不要で誰でも試せるので、回数制限をかける。
         dictionary = getattr(reader, "dictionary", None)
         self.playground = (
-            Playground(tts, dictionary, readings) if dictionary is not None else None
+            Playground(tts, dictionary, readings, effects=effects)
+            if dictionary is not None else None
         )
         self._playground_hits: dict[str, list[float]] = {}
         self._playground_total: list[float] = []
