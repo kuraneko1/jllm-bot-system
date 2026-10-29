@@ -165,10 +165,13 @@ async def _run(plan, profile_path=None) -> int:
             if shutdown in done and not activation.done():
                 activation.cancel()
                 await asyncio.gather(activation, return_exceptions=True)
-            else:
+            elif not can_reload:
+                # 直接呼び出し（テスト・単発起動）は従来どおり activate の完了で終わる。
                 await activation
-                # profile を渡された本番起動だけ SIGHUP を待つ（直接呼び出しは従来どおり）。
-                while can_reload and not shutdown.done():
+            else:
+                # Discord の接続のように activate が戻らないプラグインがあるため、
+                # 完了を待たずに SIGHUP を待つ。
+                while not shutdown.done():
                     reload_wait = asyncio.create_task(reloaded.wait())
                     done, _ = await asyncio.wait(
                         (shutdown, reload_wait),
