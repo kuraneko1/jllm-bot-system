@@ -350,77 +350,193 @@ class Kernel:
             self._stop_task = None
         try:
             for key in self.plan.order:
-                node = self.plan.nodes[key]
-                if node.state == "BLOCKED":
+                if self.plan.nodes[key].state == "BLOCKED":
                     continue
-                missing = [
-                    r
-                    for r in node.manifest.requires
-                    if r.cardinality != "optional_one"
-                    and any(
-                        self.plan.nodes[t].state != "RUNNING" for t in node.bindings[r.capability]
-                    )
-                ]
-                if missing:
-                    node.state, node.reason = (
-                        "BLOCKED",
-                        f"failed dependency: {missing[0].capability}",
-                    )
-                    if node.critical:
-                        raise RuntimeError(f"critical plugin blocked: {key}")
-                    continue
-                node.scope = ResourceScope(key)
-                try:
-                    module, attr = node.manifest.entry.split(":", 1)
-                    factory = getattr(importlib.import_module(module), attr)
-                    node.plugin = factory()
-                    deps = {}
-                    for req in node.manifest.requires:
-                        targets = [
-                            self.plan.nodes[t]
-                            for t in node.bindings[req.capability]
-                            if self.plan.nodes[t].state == "RUNNING"
-                        ]
-                        values = [target.services[req.capability] for target in targets]
-                        deps[req.capability] = (
-                            values if req.cardinality == "many" else (values[0] if values else None)
-                        )
-                    node.state = "SETUP"
-                    dependency_ids = {
-                        req.capability: list(node.bindings[req.capability])
-                        for req in node.manifest.requires
-                    }
-                    services = await node.plugin.setup(
-                        PluginContext(
-                            node.config,
-                            deps,
-                            node.scope,
-                            logging.getLogger("jllm.plugin." + key),
-                            dependency_ids,
-                        )
-                    )
-                    if not isinstance(services, dict) or set(services) != {
-                        c.capability for c in node.manifest.provides
-                    }:
-                        raise ValueError("provided services do not match manifest")
-                    node.services = services
-                    node.state = "STARTING"
-                    await node.plugin.start()
-                    node.state = "RUNNING"
-                    self._started.append(key)
-                except BaseException as exc:
-                    node.state, node.reason = "FAILED", "plugin initialization failed"
-                    try:
-                        await node.scope.close()
-                    except Exception:
-                        logging.getLogger(__name__).error("scope cleanup failed: %s", key)
-                    if not isinstance(exc, Exception):
-                        raise
-                    if node.critical:
-                        raise RuntimeError(f"critical plugin failed: {key}") from None
+                await self._start_one(self.plan, key)
         except BaseException:
             await self.stop()
             raise
+
+    async def _start_one(self, plan: Plan, key: str) -> bool:
+        """1つのノードを用意して起動する。起動したら True。"""
+
+        node = plan.nodes[key]
+        missing = [
+            r
+            for r in node.manifest.requires
+            if r.cardinality != "optional_one"
+            and any(plan.nodes[t].state != "RUNNING" for t in node.bindings[r.capability])
+        ]
+        if missing:
+            node.state, node.reason = "BLOCKED", f"failed dependency: {missing[0].capability}"
+            if node.critical:
+                raise RuntimeError(f"critical plugin blocked: {key}")
+            return False
+        node.scope = ResourceScope(key)
+        try:
+            module, attr = node.manifest.entry.split(":", 1)
+            factory = getattr(importlib.import_module(module), attr)
+            node.plugin = factory()
+            deps = {}
+            for req in node.manifest.requires:
+                targets = [
+                    plan.nodes[t]
+                    for t in node.bindings[req.capability]
+                    if plan.nodes[t].state == "RUNNING"
+                ]
+                values = [target.services[req.capability] for target in targets]
+                deps[req.capability] = (
+                    values if req.cardinality == "many" else (values[0] if values else None)
+                )
+            node.state = "SETUP"
+            dependency_ids = {
+                req.capability: list(node.bindings[req.capability])
+                for req in node.manifest.requires
+            }
+            services = await node.plugin.setup(
+                PluginContext(
+                    node.config,
+                    deps,
+                    node.scope,
+                    logging.getLogger("jllm.plugin." + key),
+                    dependency_ids,
+                )
+            )
+            if not isinstance(services, dict) or set(services) != {
+                c.capability for c in node.manifest.provides
+            }:
+                raise ValueError("provided services do not match manifest")
+            node.services = services
+            node.state = "STARTING"
+            await node.plugin.start()
+            node.state = "RUNNING"
+            self._started.append(key)
+            return True
+        except BaseException as exc:
+            node.state, node.reason = "FAILED", "plugin initialization failed"
+            try:
+                await node.scope.close()
+            except Exception:
+                logging.getLogger(__name__).error("scope cleanup failed: %s", key)
+            node.scope = None
+            if not isinstance(exc, Exception):
+                raise
+            if node.critical:
+                raise RuntimeError(f"critical plugin failed: {key}") from None
+            return False
+
+    async def _stop_one(self, node: Node) -> None:
+        node.state = "STOPPING"
+        try:
+            await node.plugin.stop()
+        except (Exception, asyncio.CancelledError):
+            logging.getLogger(__name__).error("plugin stop failed: %s", node.id)
+        try:
+            await node.scope.close()
+        except (Exception, asyncio.CancelledError):
+            logging.getLogger(__name__).error("scope cleanup failed: %s", node.id)
+        node.state = "STOPPED"
+
+    @staticmethod
+    def _signature(node: Node) -> str:
+        return json.dumps(
+            [node.manifest.version, node.config, node.bindings, node.critical],
+            sort_keys=True,
+            default=str,
+        )
+
+    @staticmethod
+    def _dependents(plan: Plan, keys: set[str]) -> set[str]:
+        """keys を（推移的に）参照しているノードを集める。"""
+
+        found: set[str] = set()
+
+        while True:
+            grew = False
+            for node in plan.nodes.values():
+                if node.id in found or node.id in keys:
+                    continue
+                if any(
+                    target in keys or target in found
+                    for targets in node.bindings.values()
+                    for target in targets
+                ):
+                    found.add(node.id)
+                    grew = True
+            if not grew:
+                return found
+
+    async def reload(self, new_plan: Plan) -> dict[str, list[str]]:
+        """稼働中の plan に差分だけ適用する（設定変更・着脱）。
+
+        - 追加・変更・削除されたノードと、その依存側だけを止めて入れ直す。
+        - 失敗したら元の plan を組み直して戻す。
+        """
+
+        if self._stop_task is not None and not self._stop_task.done():
+            raise RuntimeError("plugin shutdown is in progress")
+        old = self.plan
+        old_running = {key for key in self._started if old.nodes[key].state == "RUNNING"}
+        old_sig = {key: self._signature(node) for key, node in old.nodes.items()}
+        new_sig = {key: self._signature(node) for key, node in new_plan.nodes.items()}
+
+        changed = {k for k in old_sig.keys() & new_sig.keys() if old_sig[k] != new_sig[k]}
+        removed = old_sig.keys() - new_sig.keys()
+        added = new_sig.keys() - old_sig.keys()
+        touched = changed | removed
+        restart = (
+            changed
+            | added
+            | self._dependents(old, touched)
+            | self._dependents(new_plan, touched)
+        ) & new_sig.keys()
+
+        # 変わらないノードは、動いている実体をそのまま引き継ぐ。
+        for key in new_sig.keys() - restart:
+            if old.nodes.get(key) is not None and old.nodes[key].state == "RUNNING":
+                new_plan.nodes[key] = old.nodes[key]
+
+        stopped: list[str] = []
+        for key in reversed(old.order):
+            if key not in restart and key not in removed:
+                continue
+            node = old.nodes[key]
+            if node.state == "RUNNING" or node.scope is not None:
+                await self._stop_one(node)
+                stopped.append(key)
+            self._started = [item for item in self._started if item != key]
+
+        self.plan = new_plan
+        started: list[str] = []
+        try:
+            for key in new_plan.order:
+                if key not in restart:
+                    continue
+                if new_plan.nodes[key].state == "BLOCKED":
+                    continue
+                if await self._start_one(new_plan, key):
+                    started.append(key)
+        except BaseException:
+            # 新しく起動した分を戻し、元の plan を組み直す。
+            for key in reversed(started):
+                node = new_plan.nodes[key]
+                if node.state in ("RUNNING", "STARTING", "SETUP"):
+                    await self._stop_one(node)
+                self._started = [item for item in self._started if item != key]
+            self.plan = old
+            for key in old.order:
+                if key in old_running and old.nodes[key].state != "RUNNING":
+                    try:
+                        await self._start_one(old, key)
+                    except Exception:
+                        logging.getLogger(__name__).error("rollback failed: %s", key)
+            raise
+
+        return {
+            "started": started,
+            "stopped": stopped,
+            "unchanged": sorted(new_sig.keys() - restart),
+        }
 
     async def stop(self) -> None:
         if self._stop_task is None:

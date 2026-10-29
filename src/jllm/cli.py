@@ -84,7 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         plan = resolve(load_profile(Path(profile_path)), discover())
         if args.command == "run":
-            return asyncio.run(_run(plan))
+            return asyncio.run(_run(plan, Path(profile_path)))
         if args.command == "config":
             print("Configuration valid")
             return 0
@@ -110,15 +110,44 @@ async def _activate(plan) -> None:
         await asyncio.gather(*activations)
 
 
-async def _run(plan) -> int:
+async def _reload(kernel, profile_path) -> None:
+    """SIGHUP で profile を読み直し、差分だけ適用する。"""
+
+    try:
+        plan = resolve(load_profile(Path(profile_path)), discover())
+        summary = await kernel.reload(plan)
+        activated = 0
+        for key in summary["started"]:
+            node = kernel.plan.nodes[key]
+            if node.state == "RUNNING" and hasattr(node.plugin, "activate"):
+                await node.plugin.activate()
+                activated += 1
+        print(
+            f"jllm: reloaded ({len(summary['started'])} started, "
+            f"{len(summary['stopped'])} stopped, {activated} activated)",
+            file=sys.stderr,
+        )
+    except Exception as exc:
+        print(
+            f"jllm: reload failed ({type(exc).__name__}); keeping the running plugins",
+            file=sys.stderr,
+        )
+
+
+async def _run(plan, profile_path=None) -> int:
     kernel = Kernel(plan)
     loop = asyncio.get_running_loop()
     stopped = asyncio.Event()
+    reloaded = asyncio.Event()
     signals = (signal.SIGINT, signal.SIGTERM)
     for sig in signals:
         loop.add_signal_handler(sig, stopped.set)
+    can_reload = profile_path is not None and hasattr(signal, "SIGHUP")
+    if can_reload:
+        loop.add_signal_handler(signal.SIGHUP, reloaded.set)
     startup = asyncio.create_task(kernel.start())
     activation = None
+    reload_wait = None
     shutdown = asyncio.create_task(stopped.wait())
     exit_code = 0
     try:
@@ -138,15 +167,28 @@ async def _run(plan) -> int:
                 await asyncio.gather(activation, return_exceptions=True)
             else:
                 await activation
+                # profile を渡された本番起動だけ SIGHUP を待つ（直接呼び出しは従来どおり）。
+                while can_reload and not shutdown.done():
+                    reload_wait = asyncio.create_task(reloaded.wait())
+                    done, _ = await asyncio.wait(
+                        (shutdown, reload_wait),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if shutdown in done:
+                        break
+                    reloaded.clear()
+                    reload_wait.cancel()
+                    await asyncio.gather(reload_wait, return_exceptions=True)
+                    await _reload(kernel, profile_path)
     except Exception:
         print("jllm: plugin startup failed", file=sys.stderr)
         exit_code = 1
     finally:
-        for task in (startup, activation, shutdown):
+        for task in (startup, activation, shutdown, reload_wait):
             if task is not None:
                 task.cancel()
         await asyncio.gather(
-            *(task for task in (startup, activation, shutdown) if task is not None),
+            *(task for task in (startup, activation, shutdown, reload_wait) if task is not None),
             return_exceptions=True,
         )
         try:
@@ -156,6 +198,8 @@ async def _run(plan) -> int:
             exit_code = 1
         for sig in signals:
             loop.remove_signal_handler(sig)
+        if can_reload:
+            loop.remove_signal_handler(signal.SIGHUP)
     return exit_code
 
 
