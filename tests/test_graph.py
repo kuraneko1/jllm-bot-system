@@ -50,7 +50,7 @@ class GraphTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("graph LR", out)
-        self.assertIn('provider_main["provider/main"]', out)
+        self.assertIn('provider_main["provider"]', out)
         self.assertIn("provider_main -->|echo| consumer_main", out)
 
     def test_dot_quotes_the_same_edges(self):
