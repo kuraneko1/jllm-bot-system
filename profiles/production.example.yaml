@@ -58,6 +58,9 @@ plugins:
     enabled: true
   speech.effects:
     enabled: true
+    config:
+      # 残響（ec）用の IR。実在するファイルを指定する。
+      ir_path: data/ir/room.wav
   speech.playback:
     enabled: true
   voice.settings:
