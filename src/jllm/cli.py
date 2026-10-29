@@ -201,9 +201,10 @@ def _print_graph(plan, fmt: str, start: str | None = None, depth: int = 1) -> No
     )
     for key in order:
         node = plan.nodes[key]
-        class_list = _family(key) + (",critical" if node.critical else "")
         print(f'  {_graph_id(key)}["{_display_name(key)}"]')
-        print(f"  class {_graph_id(key)} {class_list}")
+        print(f"  class {_graph_id(key)} {_family(key)}")
+        if node.critical:
+            print(f"  style {_graph_id(key)} stroke-width:4px,stroke:#b91c1c")
     for key in order:
         node = plan.nodes[key]
         for capability, targets in sorted(node.bindings.items()):
