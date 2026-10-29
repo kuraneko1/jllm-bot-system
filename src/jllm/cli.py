@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import io
+import json
 import logging
 import os
+import re
 import signal
 import sys
 from collections.abc import Sequence
@@ -17,6 +19,144 @@ from dotenv.parser import parse_stream
 
 from jllm.kernel import Kernel, ProfileError, discover, load_profile, resolve
 
+PLUGIN_ID = re.compile(r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9-]*)+$")
+PACKAGE_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+
+PLUGIN_SOURCE = '''"""__IDENT__ の実装。"""
+
+from __future__ import annotations
+
+
+class Plugin:
+    """__IDENT__。"""
+
+    async def setup(self, ctx):
+        self.config = ctx.config
+        ctx.scope.add(self._close)
+        return {}
+
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+    async def _close(self) -> None:
+        pass
+'''
+
+TEST_SOURCE = '''import unittest
+
+from jllm.kernel import Profile, discover, resolve
+
+
+class __CLASS__Tests(unittest.TestCase):
+    def test_manifest_loads_and_resolves(self):
+        plan = resolve(Profile({"__IDENT__": {"enabled": True}}), discover())
+        self.assertEqual(plan.nodes["__IDENT__/main"].state, "PENDING")
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
+
+def _add_entry_point(pyproject: Path, ident: str, package: str) -> bool:
+    """pyproject の jllm.plugins に1行足す。既にあれば False。"""
+
+    text = pyproject.read_text(encoding="utf-8")
+    line = f'"{ident}" = "jllm_plugins.{package}:plugin.json"'
+    if line in text:
+        return False
+    header = '[project.entry-points."jllm.plugins"]'
+    lines = text.splitlines()
+    try:
+        start = lines.index(header)
+    except ValueError:
+        lines += ["", header, line]
+    else:
+        end = start + 1
+        while end < len(lines) and not lines[end].startswith("["):
+            end += 1
+        while end > start + 1 and not lines[end - 1].strip():
+            end -= 1
+        lines.insert(end, line)
+    pyproject.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
+def _new_plugin(args) -> int:
+    ident = args.plugin_id
+    if not PLUGIN_ID.fullmatch(ident):
+        print("jllm: plugin id must look like feature.example", file=sys.stderr)
+        return 1
+    package = args.package or ident.replace(".", "_").replace("-", "_")
+    if not PACKAGE_NAME.fullmatch(package):
+        print("jllm: package name must be snake_case", file=sys.stderr)
+        return 1
+
+    root = Path(args.root).resolve()
+    target = root / "plugins/builtins/src/jllm_plugins" / package
+    if target.exists():
+        print(f"jllm: already exists: {target}", file=sys.stderr)
+        return 1
+    target.mkdir(parents=True)
+
+    provides = (
+        [{"capability": args.capability, "version": 1}] if args.capability else []
+    )
+    manifest = {
+        "id": ident,
+        "version": "0.1.0",
+        "api": ">=1.0,<2.0",
+        "entry": f"jllm_plugins.{package}.plugin:Plugin",
+        "provides": provides,
+        "requires": [],
+        "optional": [],
+        "permissions": [],
+        "config_schema": "config.schema.json",
+        "multi_instance": False,
+    }
+
+    (target / "__init__.py").write_text(f'"""{ident} プラグイン。"""\n', encoding="utf-8")
+    (target / "plugin.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    (target / "config.schema.json").write_text(
+        '{\n  "type": "object",\n  "properties": {},\n  "additionalProperties": false\n}\n',
+        encoding="utf-8",
+    )
+    (target / "plugin.py").write_text(
+        PLUGIN_SOURCE.replace("__IDENT__", ident), encoding="utf-8"
+    )
+
+    entry_added = False
+    pyproject = root / "plugins/builtins/pyproject.toml"
+    if pyproject.is_file():
+        entry_added = _add_entry_point(pyproject, ident, package)
+
+    test_file = root / "tests" / f"test_{package}.py"
+    if test_file.parent.is_dir() and not test_file.exists():
+        class_name = "".join(part.title() for part in package.split("_"))
+        test_file.write_text(
+            TEST_SOURCE.replace("__IDENT__", ident).replace("__CLASS__", class_name),
+            encoding="utf-8",
+        )
+
+    print(f"作成: {target}")
+    if entry_added:
+        print(f"entry point: {pyproject}")
+    print("")
+    print("次に:")
+    print("  1. uv sync --all-packages")
+    print("  2. profile に追加:")
+    print("       plugins:")
+    print(f"         {ident}:")
+    print("           enabled: true")
+    print(
+        '  3. jllm config validate <profile> してから systemctl --user reload jllm-bot-system'
+    )
+    return 0
 
 def _load_env_files(env_file: Path | None, policy_file: Path | None) -> None:
     streams = []
@@ -42,6 +182,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--profile", dest="profile_option", type=Path, default=argparse.SUPPRESS)
     commands = parser.add_subparsers(dest="command", required=True)
 
+    new = commands.add_parser("new", help="Scaffold files")
+    new_kind = new.add_subparsers(dest="new_kind", required=True)
+    new_plugin = new_kind.add_parser("plugin", help="Create a plugin skeleton")
+    new_plugin.add_argument("plugin_id", help="e.g. feature.example")
+    new_plugin.add_argument("--root", type=Path, default=Path("."))
+    new_plugin.add_argument("--package", help="Python package name (default: derived)")
+    new_plugin.add_argument("--capability", help="Capability the plugin provides")
     plugins = commands.add_parser("plugins", help="Inspect installed plugins")
     plugins.add_subparsers(dest="action", required=True).add_parser("list")
 
@@ -76,6 +223,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         _load_env_files(getattr(args, "env_file", None), getattr(args, "policy_file", None))
+        if args.command == "new":
+            return _new_plugin(args)
         if args.command == "plugins":
             for plugin_id, manifest in sorted(discover().items()):
                 print(f"{plugin_id}\t{manifest.version}")

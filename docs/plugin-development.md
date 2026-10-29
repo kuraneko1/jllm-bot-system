@@ -2,6 +2,29 @@
 
 この文書では、現在の kernel を使った最小の plugin 作成手順を説明します。同梱の `fake.provider`、`fake.router`、`fake.consumer` は、discovery・binding・lifecycle を確認するための例です。実機能の例として、`adapter.discord`、`storage.local`、`policy.restrictions`、`feature.wavrank` も用意しています。
 
+## 0. 雛形を作る
+
+手で5ファイルを書かずに済むよう、雛形生成を用意しています。
+
+```bash
+uv run jllm new plugin feature.example --capability example.output
+```
+
+作成されるもの:
+
+```text
+plugins/builtins/src/jllm_plugins/feature_example/
+├── __init__.py
+├── plugin.json          # 登録（id・能力・entry）
+├── config.schema.json   # 起動前に検査する設定
+└── plugin.py            # setup / start / stop
+tests/test_feature_example.py
+plugins/builtins/pyproject.toml  # entry point を1行追記
+```
+
+そのあと `uv sync --all-packages` を実行し、profile に `feature.example: {enabled: true}` を足して
+`systemctl --user reload jllm-bot-system` で反映します（他のプラグインは止まりません）。
+
 ## 1. 配置
 
 初期段階では、論理 plugin を `plugins/builtins` にまとめます。独立した公開・交換・任意依存が必要になったものだけを別 package に分けます。
