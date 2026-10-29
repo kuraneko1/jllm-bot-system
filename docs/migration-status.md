@@ -16,6 +16,14 @@
 | 実 Discord・実音声 | 未検証 | 現在の検証は mock・fixture・clean install が中心 |
 | 最終互換監査 | 自動検証済み | 旧 tests の追加移植を含む1275件＋builtins 11件が成功（2026-10-29 時点）。Ruff、wheel clean install、profile 検証も完了 |
 
+## x230 の本番切り替え（2026-10-29 実施）
+
+- 旧 Bot（`jllm-voice.service`）と `jllm-voice-export.timer` を停止し、停止を確認してから `code.tar.gz`・`data.tar.gz`（3,166 エントリ）・設定ファイルを、所有者のみ読める退避先へ保存した。実行データは 543 MiB。
+- 旧設定から本番 profile を生成し（TTS 9 系統、旧 ID・表示名を維持）、`config validate` と `doctor`（BLOCKED なし）を通した。profile は `profiles.local/`（未追跡）に置き、秘密は旧 `.env`・`bot-policy.env` と鍵ファイル参照のままにした。
+- 新サービス `jllm-bot-system.service` を有効化し、旧サービスを無効化した。データは同一ディレクトリを共有し、形式変換は行っていない（旧実装へそのまま戻せる）。
+- 確認したこと: Discord ゲートウェイへの接続、ギルド 19 コマンドの登録、ダッシュボードのローカル・公開 URL の 200、既存パスキーの読込（login options 200・未ログイン登録は 401）、TTS 9 系統の起動時疎通、実験場での音声生成（18 話者・WAV 155,692 バイト）、export の増分取得（+14 件）と共有データへの書き込み、再起動 0 回。
+- 未確認: VC での実再生・実マイク、コマンドの実操作、LLM 応答、Miq の実生成、画像生成、VRAM 制御、公開環境での第三者アクセス、長時間運用。
+
 ## 本番準備の追加作業（2026-10-29）
 
 - x230 の構成を読み取り調査し、[調査結果](x230-cutover-investigation.md) と [切り替え手順案](x230-cutover-runbook.md) を作成した。現地の本番データは変更していない。
