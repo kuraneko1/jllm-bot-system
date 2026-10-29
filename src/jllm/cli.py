@@ -212,6 +212,7 @@ def _print_graph(plan, fmt: str, start: str | None = None, depth: int = 1) -> No
                 if target not in order:
                     continue
                 print(f"  {_graph_id(target)} -->|{capability}| {_graph_id(key)}")
+    print("  classDef other fill:#f8fafc,stroke:#94a3b8,color:#0f172a")
     print("  classDef critical stroke-width:4px,stroke:#b91c1c")
     for _prefix, name, fill, stroke, _label in _FAMILIES:
         print(f"  classDef {name} fill:{fill},stroke:{stroke},color:#0f172a")
