@@ -47,6 +47,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     run = commands.add_parser("run", help="Run a profile until interrupted")
     doctor = commands.add_parser("doctor", help="Check a profile and its dependencies")
+    graph = commands.add_parser("graph", help="Print the resolved plugin map")
+    graph.add_argument("--format", choices=("mermaid", "dot"), default="mermaid")
     config = commands.add_parser("config", help="Inspect profile configuration")
     validate = config.add_subparsers(dest="action", required=True).add_parser("validate")
     for command in (parser, run, doctor, config, validate):
@@ -58,11 +60,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "--policy-file", type=Path, default=argparse.SUPPRESS,
             help="Load an explicit trusted policy dotenv file, overriding the environment",
         )
-    for command in (run, doctor, config, validate):
+    for command in (run, doctor, graph, config, validate):
         command.add_argument(
             "--profile", dest="profile_option", type=Path, default=argparse.SUPPRESS
         )
-    for command in (run, doctor, validate):
+    for command in (run, doctor, graph, validate):
         command.add_argument("profile", nargs="?", type=Path, default=None)
 
     args = parser.parse_args(argv)
@@ -89,6 +91,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "config":
             print("Configuration valid")
             return 0
+        if args.command == "graph":
+            _print_graph(plan, args.format)
+            return 0
 
         blocked = False
         for instance_id, node in sorted(plan.nodes.items()):
@@ -99,6 +104,42 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ProfileError, OSError, ValueError) as exc:
         print(f"jllm: {exc}", file=sys.stderr)
         return 1
+
+
+def _graph_id(instance_id: str) -> str:
+    return "".join(char if char.isalnum() else "_" for char in instance_id)
+
+
+def _print_graph(plan, fmt: str) -> None:
+    """解決済みの plan を依存グラフとして出す（Mermaid / Graphviz）。"""
+
+    if fmt == "dot":
+        print("digraph plugins {")
+        print('  rankdir="LR";')
+        for key in plan.order:
+            node = plan.nodes[key]
+            shape = ", shape=hexagon" if node.critical else ""
+            print(f'  "{key}" [label="{key}"{shape}];')
+        for key in plan.order:
+            node = plan.nodes[key]
+            for capability, targets in sorted(node.bindings.items()):
+                for target in targets:
+                    print(f'  "{target}" -> "{key}" [label="{capability}"];')
+        print("}")
+        return
+
+    print("graph LR")
+    print("  %% 太枠 = critical（失敗すると起動を中止）")
+    for key in plan.order:
+        node = plan.nodes[key]
+        style = ":::critical" if node.critical else ""
+        print(f'  {_graph_id(key)}["{key}"]{style}')
+    for key in plan.order:
+        node = plan.nodes[key]
+        for capability, targets in sorted(node.bindings.items()):
+            for target in targets:
+                print(f"  {_graph_id(target)} -->|{capability}| {_graph_id(key)}")
+    print("  classDef critical stroke-width:3px")
 
 
 async def _activate(plan) -> None:

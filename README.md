@@ -75,6 +75,9 @@ cp profiles/reader.yaml profiles.local/reader.yaml
 uv run jllm plugins list
 uv run jllm config validate --profile profiles.local/reader.yaml
 uv run jllm doctor --profile profiles.local/reader.yaml
+# 依存グラフ（Mermaid / Graphviz）
+uv run jllm graph --profile profiles.local/reader.yaml
+uv run jllm graph --profile profiles.local/reader.yaml --format dot
 ```
 
 起動は次のコマンドです。
