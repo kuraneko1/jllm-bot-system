@@ -47,6 +47,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     run = commands.add_parser("run", help="Run a profile until interrupted")
     doctor = commands.add_parser("doctor", help="Check a profile and its dependencies")
+    impact = commands.add_parser("impact", help="Show what a plugin depends on and what uses it")
+    impact.add_argument("node", help="Plugin instance, e.g. feature.reader/main")
     graph = commands.add_parser("graph", help="Print the resolved plugin map")
     graph.add_argument("--format", choices=("mermaid", "dot"), default="mermaid")
     graph.add_argument(
@@ -64,11 +66,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "--policy-file", type=Path, default=argparse.SUPPRESS,
             help="Load an explicit trusted policy dotenv file, overriding the environment",
         )
-    for command in (run, doctor, graph, config, validate):
+    for command in (run, doctor, graph, impact, config, validate):
         command.add_argument(
             "--profile", dest="profile_option", type=Path, default=argparse.SUPPRESS
         )
-    for command in (run, doctor, graph, validate):
+    for command in (run, doctor, graph, impact, validate):
         command.add_argument("profile", nargs="?", type=Path, default=None)
 
     args = parser.parse_args(argv)
@@ -94,6 +96,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return asyncio.run(_run(plan, Path(profile_path)))
         if args.command == "config":
             print("Configuration valid")
+            return 0
+        if args.command == "impact":
+            if args.node not in plan.nodes:
+                print(f"jllm: unknown plugin instance: {args.node}", file=sys.stderr)
+                return 1
+            _print_impact(plan, args.node)
             return 0
         if args.command == "graph":
             if args.from_node and args.from_node not in plan.nodes:
@@ -144,6 +152,38 @@ def _display_name(instance_id: str) -> str:
 
 def _graph_id(instance_id: str) -> str:
     return "".join(char if char.isalnum() else "_" for char in instance_id)
+
+
+def _walk(edges: dict[str, set[str]], start: str) -> set[str]:
+    seen: set[str] = set()
+    frontier = {start}
+    while frontier:
+        nxt: set[str] = set()
+        for key in frontier:
+            nxt |= edges.get(key, set()) - seen
+        seen |= nxt
+        frontier = nxt
+    return seen - {start}
+
+
+def _print_impact(plan, target: str) -> None:
+    """1つのプラグインの依存先と、それに依存する側を出す。"""
+
+    needs: dict[str, set[str]] = {}
+    used_by: dict[str, set[str]] = {}
+    for node in plan.nodes.values():
+        for targets in node.bindings.values():
+            for dependency in targets:
+                needs.setdefault(node.id, set()).add(dependency)
+                used_by.setdefault(dependency, set()).add(node.id)
+
+    print(target)
+    print("  依存している:")
+    for key in sorted(_walk(needs, target)):
+        print(f"    {key}")
+    print("  これに依存している（触ると影響する）:")
+    for key in sorted(_walk(used_by, target)):
+        print(f"    {key}")
 
 
 def _graph_subset(plan, start: str | None, depth: int) -> list[str]:

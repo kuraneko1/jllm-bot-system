@@ -53,6 +53,16 @@ class GraphTests(unittest.TestCase):
         self.assertIn('provider_main["provider"]', out)
         self.assertIn("provider_main -->|echo| consumer_main", out)
 
+    def test_impact_lists_dependencies_and_users(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            profile = self.profile(directory)
+            with patch("jllm.cli.discover", return_value=self.discovered()):
+                code, out = self.run_cli(["impact", "provider/main", str(profile)])
+
+        self.assertEqual(code, 0)
+        self.assertIn("consumer/main", out)
+        self.assertIn("依存している", out)
+
     def test_dot_quotes_the_same_edges(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
             profile = self.profile(directory)

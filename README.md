@@ -78,6 +78,8 @@ uv run jllm doctor --profile profiles.local/reader.yaml
 # 依存グラフ（Mermaid / Graphviz）
 uv run jllm graph --profile profiles.local/reader.yaml
 uv run jllm graph --profile profiles.local/reader.yaml --format dot
+# 影響範囲（依存先と、これに依存する側）
+uv run jllm impact feature.reader/main --profile profiles.local/reader.yaml
 ```
 
 起動は次のコマンドです。
