@@ -22,6 +22,14 @@ tests/test_feature_example.py
 plugins/builtins/pyproject.toml  # entry point を1行追記
 ```
 
+そのあと `uv sync --all-packages` を実行し、profile への追記は次のコマンドで行えます。
+
+```bash
+uv run jllm plugins add feature.example --profile profiles.local/reader.yaml --reload
+```
+
+手で `feature.example: {enabled: true}` を足しても構いません。どちらも検証を通ってから反映されます。
+
 そのあと `uv sync --all-packages` を実行し、profile に `feature.example: {enabled: true}` を足して
 `systemctl --user reload jllm-bot-system` で反映します（他のプラグインは止まりません）。
 

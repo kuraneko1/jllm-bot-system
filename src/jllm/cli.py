@@ -14,6 +14,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 from dotenv.parser import parse_stream
 
@@ -84,6 +85,213 @@ def _add_entry_point(pyproject: Path, ident: str, package: str) -> bool:
     pyproject.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return True
 
+
+def _plugin_block(ident: str, config: dict) -> list[str]:
+    lines = [f"  {ident}:", "    enabled: true"]
+    if config:
+        lines.append("    config:")
+        for key in sorted(config):
+            value = json.dumps(config[key], ensure_ascii=False)
+            lines.append(f"      {key}: {value}")
+    return lines
+
+
+def _insert_plugin(text: str, ident: str, config: dict) -> str:
+    lines = text.splitlines()
+    block = _plugin_block(ident, config)
+    for index, line in enumerate(lines):
+        if line.strip() == "plugins: {}":
+            lines[index : index + 1] = ["plugins:"] + block
+            return "\n".join(lines) + "\n"
+        if line.rstrip() == "plugins:":
+            end = index + 1
+            while end < len(lines) and (
+                lines[end].startswith((" ", "\t")) or not lines[end].strip()
+            ):
+                end += 1
+            while end > index + 1 and not lines[end - 1].strip():
+                end -= 1
+            lines[end:end] = block
+            return "\n".join(lines) + "\n"
+    lines += ["", "plugins:"] + block
+    return "\n".join(lines) + "\n"
+
+
+def _remove_plugin(text: str, ident: str) -> str | None:
+    lines = text.splitlines()
+    pattern = re.compile(rf"^  {re.escape(ident)}:\s*$")
+    for index, line in enumerate(lines):
+        if not pattern.match(line):
+            continue
+        indent = len(line) - len(line.lstrip())
+        end = index + 1
+        while end < len(lines):
+            following = lines[end]
+            if not following.strip():
+                end += 1
+                continue
+            if len(following) - len(following.lstrip()) > indent:
+                end += 1
+                continue
+            break
+        while end > index + 1 and not lines[end - 1].strip():
+            end -= 1
+        del lines[index:end]
+        return _tidy("\n".join(lines) + "\n")
+    return None
+
+
+def _tidy(text: str) -> str:
+    """空になった見出しを片付ける（空の plugins は {} にする）。"""
+
+    lines = text.splitlines()
+    kept: list[str] = []
+    for index, line in enumerate(lines):
+        header = re.match(r"^(\s*)([A-Za-z0-9_.-]+):\s*$", line)
+        if header:
+            indent = len(header.group(1))
+            following = lines[index + 1] if index + 1 < len(lines) else ""
+            deeper = following.strip() and len(following) - len(following.lstrip()) > indent
+            if not deeper:
+                if indent == 0 and header.group(2) == "plugins":
+                    kept.append("plugins: {}")
+                continue
+        kept.append(line)
+    return "\n".join(kept).rstrip() + "\n"
+
+def _drop_bindings(text: str, ident: str) -> str:
+    """--force で外すとき、そのプラグインを指す binding も落とす。"""
+
+    prefix = ident + "/"
+    kept: list[str] = []
+
+    for line in text.splitlines():
+        match = re.match(r"^(\s+)([A-Za-z0-9_.-]+):\s*(.+)$", line)
+        if match:
+            value = match.group(3).strip()
+            if value.startswith("[") and value.endswith("]"):
+                items = [item.strip() for item in value[1:-1].split(",") if item.strip()]
+                remaining = [item for item in items if not item.strip("\"'").startswith(prefix)]
+                if len(remaining) != len(items):
+                    if remaining:
+                        kept.append(f"{match.group(1)}{match.group(2)}: [{", ".join(remaining)}]")
+                    continue
+            elif value.strip("\"'").startswith(prefix):
+                continue
+        kept.append(line)
+
+    pruned: list[str] = []
+    for index, line in enumerate(kept):
+        header = re.match(r"^(\s+)([A-Za-z0-9_.-]+):\s*$", line)
+        if header:
+            indent = len(header.group(1))
+            following = kept[index + 1] if index + 1 < len(kept) else ""
+            deeper = following.strip() and len(following) - len(following.lstrip()) > indent
+            if not deeper:
+                continue
+        pruned.append(line)
+
+    return _tidy("\n".join(pruned) + "\n")
+
+
+def _write_validated(path: Path, text: str, discovered) -> None:
+    temporary = path.with_name(path.name + ".tmp")
+    mode = path.stat().st_mode
+    temporary.write_text(text, encoding="utf-8")
+    os.chmod(temporary, mode)
+    try:
+        resolve(load_profile(temporary), discovered)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    os.replace(temporary, path)
+
+
+def _reload_service() -> None:
+    import subprocess
+
+    subprocess.run(
+        ["systemctl", "--user", "reload", "jllm-bot-system"], check=True
+    )
+
+
+def _plugin_edit(args, discovered) -> int:
+    option = getattr(args, "profile_option", None)
+    if args.profile and option:
+        print("jllm: specify the profile once", file=sys.stderr)
+        return 1
+    profile_path = option or args.profile or os.environ.get("JLLM_PROFILE")
+    if not profile_path:
+        print("jllm: specify a profile", file=sys.stderr)
+        return 1
+    path = Path(profile_path)
+    ident = args.plugin_id
+    if ident not in discovered:
+        print(f"jllm: unknown plugin: {ident}", file=sys.stderr)
+        return 1
+
+    text = path.read_text(encoding="utf-8")
+    current = resolve(load_profile(path), discovered)
+
+    if args.action == "add":
+        if any(key.startswith(ident + "/") for key in current.nodes):
+            print(f"jllm: already enabled: {ident}", file=sys.stderr)
+            return 1
+        config = {}
+        for item in args.config:
+            key, separator, raw = item.partition("=")
+            if not separator or not key:
+                print(f"jllm: --config needs KEY=VALUE: {item}", file=sys.stderr)
+                return 1
+            config[key] = yaml.safe_load(raw)
+        updated = _insert_plugin(text, ident, config)
+        try:
+            _write_validated(path, updated, discovered)
+        except (ProfileError, OSError, ValueError) as exc:
+            print(f"jllm: {exc}", file=sys.stderr)
+            return 1
+        print(f"有効化: {ident} ({path})")
+        for line in _plugin_block(ident, config):
+            print("  " + line)
+    else:
+        used_by = sorted(
+            node.id
+            for node in current.nodes.values()
+            if any(
+                target.startswith(ident + "/")
+                for targets in node.bindings.values()
+                for target in targets
+            )
+        )
+        if used_by and not args.force:
+            print(f"jllm: {ident} is used by: " + ", ".join(used_by), file=sys.stderr)
+            print("jllm: disable those first, or pass --force", file=sys.stderr)
+            return 1
+        updated = _remove_plugin(text, ident)
+        if updated is not None and used_by:
+            updated = _drop_bindings(updated, ident)
+        if updated is None:
+            print(f"jllm: not enabled: {ident}", file=sys.stderr)
+            return 1
+        try:
+            _write_validated(path, updated, discovered)
+        except (ProfileError, OSError, ValueError) as exc:
+            print(f"jllm: {exc}", file=sys.stderr)
+            return 1
+        print(f"無効化: {ident} ({path})")
+        if used_by:
+            print("注意: 起動時に BLOCKED になるもの: " + ", ".join(used_by))
+
+    if args.reload:
+        try:
+            _reload_service()
+        except Exception:
+            print("jllm: reload failed", file=sys.stderr)
+            return 1
+        print("反映: SIGHUP を送りました")
+    else:
+        print("反映: systemctl --user reload jllm-bot-system")
+    return 0
 
 def _new_plugin(args) -> int:
     ident = args.plugin_id
@@ -189,8 +397,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     new_plugin.add_argument("--root", type=Path, default=Path("."))
     new_plugin.add_argument("--package", help="Python package name (default: derived)")
     new_plugin.add_argument("--capability", help="Capability the plugin provides")
-    plugins = commands.add_parser("plugins", help="Inspect installed plugins")
-    plugins.add_subparsers(dest="action", required=True).add_parser("list")
+    plugins = commands.add_parser("plugins", help="Inspect or edit plugins")
+    plugin_actions = plugins.add_subparsers(dest="action", required=True)
+    plugin_actions.add_parser("list")
+    for name, help_text in (("add", "Enable a plugin in a profile"), ("remove", "Disable it")):
+        action = plugin_actions.add_parser(name, help=help_text)
+        action.add_argument("plugin_id")
+        action.add_argument(
+            "--profile", dest="profile_option", type=Path, default=argparse.SUPPRESS
+        )
+        action.add_argument("profile", nargs="?", type=Path, default=None)
+        action.add_argument("--reload", action="store_true", help="Send SIGHUP after writing")
+        if name == "add":
+            action.add_argument("--config", action="append", default=[], metavar="KEY=VALUE")
+        else:
+            action.add_argument("--force", action="store_true", help="Remove even if used")
 
     run = commands.add_parser("run", help="Run a profile until interrupted")
     doctor = commands.add_parser("doctor", help="Check a profile and its dependencies")
@@ -226,9 +447,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "new":
             return _new_plugin(args)
         if args.command == "plugins":
-            for plugin_id, manifest in sorted(discover().items()):
-                print(f"{plugin_id}\t{manifest.version}")
-            return 0
+            discovered = discover()
+            if args.action == "list":
+                for plugin_id, manifest in sorted(discovered.items()):
+                    print(f"{plugin_id}\t{manifest.version}")
+                return 0
+            return _plugin_edit(args, discovered)
 
         profile_option = getattr(args, "profile_option", None)
         if args.profile and profile_option:
