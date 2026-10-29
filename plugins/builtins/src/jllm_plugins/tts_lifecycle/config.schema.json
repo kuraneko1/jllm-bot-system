@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "targets": {
+      "type": "object",
+      "description": "バックエンドID → [ホスト名, ホスト側のunit名]。null は起動しない。",
+      "additionalProperties": {
+        "type": ["array", "null"],
+        "items": {"type": "string", "minLength": 1},
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "local_only": {
+      "type": "array",
+      "description": "起動はしないが、切替時に他を止める対象として数えるバックエンド。",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "unmanaged_hosts": {
+      "type": "array",
+      "description": "起動スクリプトを置けないホスト。起動操作はせず、他を止めるだけ。",
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "additionalProperties": false
+}

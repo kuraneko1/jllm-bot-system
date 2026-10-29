@@ -3,13 +3,30 @@
 import unittest
 
 from jllm_plugins.tts_lifecycle.service import (
-    LOCAL_ONLY,
-    TARGETS,
-    UNMANAGED_HOSTS,
     LifecycleError,
     TTSLifecycle,
+    build_tts_lifecycle,
 )
 from jllm_tts import TTSBackend, TTSBackendError
+
+#: テスト用の割り当て。実運用では profile の targets で指定する。
+TARGETS = {
+    "home": ("gpu", "irodori"),
+    "speechcpp": ("gpu", "speechcpp"),
+    "ming": ("gpu", "ming"),
+    "nuko": ("nuko", "drama3"),
+}
+LOCAL_ONLY = {"x230-voicevox"}
+UNMANAGED = {"nuko"}
+
+
+def lifecycle_with(hosts):
+    return TTSLifecycle(
+        dict(hosts),
+        targets=TARGETS,
+        local_only=LOCAL_ONLY,
+        unmanaged_hosts=UNMANAGED,
+    )
 
 
 class FakeHost:
@@ -89,33 +106,43 @@ class FakeBackend(TTSBackend):
 
 
 class MappingTests(unittest.TestCase):
-    def test_each_backend_maps_to_a_host_and_a_unit(self):
-        self.assertEqual(TARGETS["home"], ("gpu", "irodori"))
-        self.assertEqual(TARGETS["speechcpp"], ("gpu", "speechcpp"))
-        self.assertEqual(TARGETS["ming"], ("gpu", "ming"))
-        self.assertEqual(TARGETS["home-drama3"], ("gpu", "drama3"))
-        self.assertEqual(TARGETS["z170"], ("z170", "speechcpp"))
-        self.assertEqual(TARGETS["z170-ts"], ("z170", "speechcpp"))
-        self.assertEqual(TARGETS["z170-irodori"], ("z170", "irodori"))
-        self.assertIsNone(TARGETS["x230-voicevox"])
-        self.assertEqual(LOCAL_ONLY, {"x230-voicevox"})
+    env = {
+        "TTS_CONTROL_HOST": "gpu.example",
+        "TTS_CONTROL_KEY": "/k",
+        "TTS_CONTROL_KNOWN_HOSTS": "/kh",
+    }
 
-    def test_no_mapping_for_untouchable_services(self):
-        self.assertNotIn("d1-local", TARGETS)
-        self.assertNotIn("anima-mobile", TARGETS)
-        self.assertNotIn("jllm-translation", TARGETS)
+    def test_targets_come_from_the_configuration(self):
+        service = build_tts_lifecycle(
+            env=self.env,
+            config={
+                "targets": {"home": ["gpu", "irodori"], "local": None},
+                "local_only": ["local"],
+                "unmanaged_hosts": ["external"],
+            },
+        )
 
-    def test_nuko_is_an_unmanaged_external_host(self):
-        """外部ホスト（管理スクリプト無し）。起動先は持つが、操作はしない。"""
+        self.assertEqual(service.targets["home"], ("gpu", "irodori"))
+        self.assertIsNone(service.targets["local"])
+        self.assertEqual(service.local_only, {"local"})
+        self.assertEqual(service.unmanaged_hosts, {"external"})
 
-        self.assertEqual(TARGETS["nuko"], ("nuko", "drama3"))
-        self.assertEqual(UNMANAGED_HOSTS, {"nuko"})
+    def test_without_configuration_nothing_is_started(self):
+        service = build_tts_lifecycle(env=self.env, config={})
+
+        self.assertEqual(service.targets, {})
+        self.assertEqual(service.hosts, {"gpu": service.hosts["gpu"]})
+
+    def test_missing_control_environment_disables_lifecycle(self):
+        service = build_tts_lifecycle(env={}, config={"targets": {"home": ["gpu", "irodori"]}})
+
+        self.assertFalse(service.configured)
 
 
 class EnsureTests(unittest.IsolatedAsyncioTestCase):
     async def test_target_host_is_switched_and_other_hosts_are_stopped(self):
         gpu, z170 = FakeHost(stopped=["ming"]), FakeHost()
-        lifecycle = TTSLifecycle({"gpu": gpu, "z170": z170})
+        lifecycle = lifecycle_with({"gpu": gpu, "z170": z170})
 
         result = await lifecycle.ensure("home")
 
@@ -127,7 +154,7 @@ class EnsureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_target_host_also_stops_its_other_units(self):
         gpu = FakeHost(stopped=["ming", "speechcpp"])
-        lifecycle = TTSLifecycle({"gpu": gpu})
+        lifecycle = lifecycle_with({"gpu": gpu})
 
         result = await lifecycle.ensure("home")
 
@@ -136,7 +163,7 @@ class EnsureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_local_engine_only_stops_the_remote_ones(self):
         gpu, z170 = FakeHost(stopped=["irodori"]), FakeHost(stopped=["speechcpp"])
-        lifecycle = TTSLifecycle({"gpu": gpu, "z170": z170})
+        lifecycle = lifecycle_with({"gpu": gpu, "z170": z170})
 
         result = await lifecycle.ensure("x230-voicevox")
 

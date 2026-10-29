@@ -12,7 +12,7 @@
     "duck_enabled": {"type": "boolean", "default": false},
     "owner_id": {"type": "integer", "default": 0, "minimum": 0},
     "default_speaker": {"type": "integer", "default": 1},
-    "mytalk_hidden_voices": {"type": "array", "items": {"type": "string"}, "default": ["demo先輩", "淫夢(登録なし)"]},
+    "mytalk_hidden_voices": {"type": "array", "items": {"type": "string"}, "default": []},
     "bookmark_reaction": {"type": "string", "default": ""},
     "bookmark_notify": {"type": "boolean", "default": true},
     "tts_switch_user_ids": {"type": "array", "items": {"type": "integer"}, "default": []},

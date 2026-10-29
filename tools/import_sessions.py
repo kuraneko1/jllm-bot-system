@@ -9,8 +9,8 @@ x230 で実行する（トークンとセッションの実体がそこにある
 
     cd /home/ryu/jllm-voice
     .venv/bin/python tools/import-sessions.py --channel 1559571226622566441
-    .venv/bin/python tools/import-sessions.py --channel 1552346936898752623 --limit 3000
-    .venv/bin/python tools/import-sessions.py --jsonl data/exports/1552346936898752623/messages.jsonl
+    .venv/bin/python tools/import_sessions.py --channel <channel-id> --limit 3000
+    .venv/bin/python tools/import_sessions.py --jsonl data/exports/<channel-id>/messages.jsonl
     .venv/bin/python tools/import-sessions.py --channel ... --dry-run
 
 - 呼び出し（メンション／語尾の ``jbot``）で始まった会話を根として、

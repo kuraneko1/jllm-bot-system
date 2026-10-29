@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -26,7 +27,6 @@ KIND_PROVIDER = {
 }
 BACKENDS = {"local", "sarashina", "atmos"}
 TRUTHY = {"1", "true", "yes", "on"}
-DEFAULT_WAV_RANK_CHANNEL = "1552346936898752623"
 
 
 def text(env, key, default=""):
@@ -268,6 +268,13 @@ def build(env, backends, data_dir):
         },
     }
     plugins["tts.lifecycle"] = {"enabled": True}
+
+    if text(env, "TTS_LIFECYCLE_TARGETS"):
+        plugins["tts.lifecycle"]["config"] = {
+            "targets": json.loads(text(env, "TTS_LIFECYCLE_TARGETS")),
+            "local_only": items(env, "TTS_LIFECYCLE_LOCAL_ONLY"),
+            "unmanaged_hosts": items(env, "TTS_LIFECYCLE_UNMANAGED"),
+        }
     plugins["ops.vram"] = {"enabled": True}
     plugins["feature.miq"] = {
         "enabled": True,
@@ -316,6 +323,7 @@ def build(env, backends, data_dir):
             "bookmark_reaction": text(env, "BOOKMARK_REACTION"),
             "bookmark_notify": flag(env, "BOOKMARK_NOTIFY", True),
             "tts_switch_user_ids": switch_users,
+            "mytalk_hidden_voices": items(env, "MYTALK_HIDDEN_VOICES"),
             "toggles_path": path("toggles.json"),
             "require_existing_toggles": True,
             "dashboard_url": front_url,
@@ -401,7 +409,9 @@ def build(env, backends, data_dir):
         "enabled": True,
         "config": {
             "data_dir": str(data_dir),
-            "channel_id": text(env, "WAV_RANK_CHANNEL") or DEFAULT_WAV_RANK_CHANNEL,
+            # 旧実装の既定は許可チャンネルの先頭と同じだった。
+            "channel_id": text(env, "WAV_RANK_CHANNEL")
+            or (str(whitelist[0]) if whitelist else ""),
         },
     }
     plugins["web.dashboard"] = {
@@ -439,10 +449,12 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
-    env = {}
-    for source in (args.env_file, args.policy_file):
-        if source is not None:
-            env.update({k: v for k, v in dotenv_values(source).items() if v is not None})
+    # 優先順位: policy > 起動プロセスの環境 > env ファイル（旧実装と同じ）。
+    env = dict(os.environ)
+    if args.env_file is not None:
+        env.update({k: v for k, v in dotenv_values(args.env_file).items() if v is not None})
+    if args.policy_file is not None:
+        env.update({k: v for k, v in dotenv_values(args.policy_file).items() if v is not None})
 
     backends = json.loads(args.backends.read_text(encoding="utf-8"))
     profile, summary = build(env, backends, args.data_dir.resolve())

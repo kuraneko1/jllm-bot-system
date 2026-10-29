@@ -10,9 +10,13 @@ from tests.test_reader_core import ReaderCoreTests
 
 class ReaderPanelTests(ReaderCoreTests):
     async def test_mytalk_hidden_voices_default_custom_and_empty(self):
-        speakers = [(1, "demo先輩"), (2, "淫夢(登録なし)"), (3, "clone")]
-        for hidden, expected in ((None, {"3"}), (frozenset({"clone"}), {"1", "2"}),
-                                 (frozenset(), {"1", "2", "3"})):
+        speakers = [(1, "hidden-a"), (2, "hidden-b"), (3, "clone")]
+        # 既定は非表示なし。設定するとその話者だけ隠れ、空にすると全部出る。
+        for hidden, expected in (
+            (frozenset(), {"1", "2", "3"}),
+            (frozenset({"clone"}), {"1", "2"}),
+            (frozenset({"hidden-a"}), {"2", "3"}),
+        ):
             if hidden is not None:
                 self.cog.config.mytalk_hidden_voices = hidden
             view = MyTalkView(self.cog, guild_id=1, user_id=42, speakers=speakers)

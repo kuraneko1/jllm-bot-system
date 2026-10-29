@@ -110,6 +110,8 @@ uv run jllm run --profile profiles.local/wavrank.yaml --env-file .env
 - 音声、参照音声、画像生成物、モデル、フォント
 - 会話ログ、SQLite、エクスポート、利用者設定、そのほかの実行データ
 
+外部由来のコードは [NOTICE](NOTICE) に出典を記載しています（Miq は上流リポジトリの同期物です）。
+
 意図しないファイルが追跡対象になっていないかは `git status --ignored` で確認できます。追跡対象の機械検査には次を使用します。
 
 ```bash

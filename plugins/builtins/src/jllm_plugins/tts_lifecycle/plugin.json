@@ -7,6 +7,6 @@
   "requires": [],
   "optional": [],
   "permissions": ["ops.remote-control"],
-  "config_schema": {},
+  "config_schema": "config.schema.json",
   "multi_instance": false
 }

@@ -6,7 +6,7 @@
 2. 選んだホストで ``switch <unit>`` を実行する（ホスト側が他のTTSを止めて起動する）
 3. ホスト側が最大60秒まで疎通をポーリングし、起動できたかを返す
 
-管理スクリプトを置けない外部ホスト（:data:`UNMANAGED_HOSTS`。いまは nuko）は 2 を
+管理スクリプトを置けない外部ホスト（``unmanaged_hosts`` の設定）は 2 を
 **no-op** にして 1 だけを行い、ログに「管理対象外」と出す（切替をエラーにしない）。
 
 実際の操作は各ホストの ``server/tts-lifecycle.py``（許可リスト制・``systemctl --user``）
@@ -24,30 +24,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
-#: バックエンド id → (ホスト名, ホスト側の TTS id)。
-#: ``None`` は「このホストでは起動しない」（x230 内蔵の VOICEVOX。Docker 側の管理）。
-TARGETS = {
-    "speechcpp": ("gpu", "speechcpp"),
-    "home": ("gpu", "irodori"),
-    "home-drama3": ("gpu", "drama3"),
-    "ming": ("gpu", "ming"),
-    "z170": ("z170", "speechcpp"),
-    "z170-ts": ("z170", "speechcpp"),
-    "z170-irodori": ("z170", "irodori"),
-    # nuko は他人の Tailscale ノード（別テイルネット）。管理スクリプトが無いので
-    # 起動・停止はできないが、「他を止める」対象としては数える。
-    "nuko": ("nuko", "drama3"),
-    "x230-voicevox": None,
-}
-
-#: 起動はしないが「他を止める」対象になるバックエンド（x230 内蔵）
-LOCAL_ONLY = {"x230-voicevox"}
-
-#: 管理スクリプトが無い（``TTS_CONTROL_*`` を配れない）外部ホスト。
-#: 切替のときは「他のTTSを止める」だけ行い、この先の起動操作は **no-op** にする
-#: （エラーにもしない）。``TTS_CONTROL_*`` が未設定のまま切替を頼まれると
-#: 「起動制御が未設定です」で止まって他を止め損ねるので、その手前で分ける。
-UNMANAGED_HOSTS = {"nuko"}
+# どのバックエンドをどのホストのどの unit に対応させるかは profile の設定
+# （targets / local_only / unmanaged_hosts）で決める。コードは環境を持たない。
 
 #: ホストごとの SSH タイムアウト（秒）。switch は停止＋起動待ちを含む。
 TIMEOUTS = {"status": 30, "stop": 90, "start": 120, "switch": 180}
@@ -65,11 +43,6 @@ class NoTTSLifecycle:
     async def ensure(self, ident):
         return None
 
-
-def target_for(ident):
-    """バックエンド id から (ホスト, TTS id) を引く。未登録なら ``KeyError``。"""
-
-    return TARGETS[ident]
 
 
 class SSHHostController:
@@ -140,8 +113,14 @@ class TTSLifecycle:
 
     configured = True
 
-    def __init__(self, hosts):
+    def __init__(self, hosts, targets=None, local_only=(), unmanaged_hosts=()):
         self.hosts = dict(hosts)
+        self.targets = {
+            key: tuple(value) if value else None
+            for key, value in (targets or {}).items()
+        }
+        self.local_only = set(local_only)
+        self.unmanaged_hosts = set(unmanaged_hosts)
 
     async def ensure(self, ident):
         """選択先を起動し、それ以外の TTS を止める。
@@ -163,14 +142,17 @@ class TTSLifecycle:
             "host": "",
         }
 
-        if ident not in TARGETS:
+        if ident in self.local_only:
+            target = None
+        elif ident in self.targets:
+            target = self.targets[ident]
+        else:
             result["error"] = "このバックエンドの起動先が未登録です。"
             return result
 
-        target = TARGETS[ident]
         result["target"] = list(target) if target else None
 
-        if target and target[0] in UNMANAGED_HOSTS:
+        if target and target[0] in self.unmanaged_hosts:
             # 管理スクリプトが無い外部ホスト。起動はできないが、切替は妨げない
             # （他のTTSは従来どおり止める）。エラーにはしない。
             logger.info(
@@ -246,10 +228,14 @@ class TTSLifecycle:
             logger.info("TTSライフサイクル: %s:%s を起動（%.1f秒）", name, ident, result["seconds"])
 
 
-def build_tts_lifecycle(env=None):
-    """``TTS_CONTROL_*``（GPU機）と ``TTS_CONTROL_Z170_*`` から作る。"""
+def build_tts_lifecycle(env=None, config=None):
+    """``TTS_CONTROL_*``（GPU機）と ``TTS_CONTROL_Z170_*`` から作る。
+
+    どのバックエンドをどのホストへ割り当てるかは ``config`` で指定する。
+    """
 
     env = dict(os.environ if env is None else env)
+    config = dict(config or {})
     hosts = {}
 
     for name, prefix in (("gpu", "TTS_CONTROL"), ("z170", "TTS_CONTROL_Z170")):
@@ -265,7 +251,12 @@ def build_tts_lifecycle(env=None):
     if not hosts:
         return NoTTSLifecycle()
 
-    return TTSLifecycle(hosts)
+    return TTSLifecycle(
+        hosts,
+        targets=config.get("targets"),
+        local_only=config.get("local_only", []),
+        unmanaged_hosts=config.get("unmanaged_hosts", []),
+    )
 
 
 def _stopped_note(stopped):

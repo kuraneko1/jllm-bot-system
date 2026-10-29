@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 MYTALK_MAX_SPEAKER_OPTIONS = 22
 MYTALK_PANEL_TIMEOUT = 300
 MYTALK_MUTE_VALUE = "mute"
-MYTALK_HIDDEN_VOICES = {"demo先輩", "淫夢(登録なし)"}
+#: /mytalk の一覧から隠す話者。既定は空で、profile の mytalk_hidden_voices で指定する。
+MYTALK_HIDDEN_VOICES: frozenset[str] = frozenset()
 
 
 class MyTalkView(discord.ui.View):

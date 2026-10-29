@@ -149,7 +149,7 @@ class ReaderConfig:
     duck_enabled: bool = False
     owner_id: int = 0
     default_speaker: int = 1
-    mytalk_hidden_voices: frozenset[str] = frozenset(MYTALK_HIDDEN_VOICES)
+    mytalk_hidden_voices: frozenset[str] = MYTALK_HIDDEN_VOICES
     bookmark_reaction: str = ""
     bookmark_notify: bool = True
     tts_switch_user_ids: frozenset[int] = frozenset()
@@ -1794,7 +1794,7 @@ class Plugin:
             owner_id=ctx.config.get("owner_id", 0),
             default_speaker=ctx.config.get("default_speaker", 1),
             mytalk_hidden_voices=frozenset(
-                ctx.config.get("mytalk_hidden_voices", MYTALK_HIDDEN_VOICES)
+                ctx.config.get("mytalk_hidden_voices", [])
             ),
             bookmark_reaction=ctx.config.get("bookmark_reaction", ""),
             bookmark_notify=ctx.config.get("bookmark_notify", True),

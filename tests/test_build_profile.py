@@ -133,6 +133,18 @@ class BuildProfileTests(unittest.TestCase):
             profile, _ = build_profile.build(environment(), backends(), data)
             self.assertEqual(profile["plugins"]["speech.effects"]["config"]["ir_path"], str(own))
 
+    def test_lifecycle_targets_come_from_the_environment(self):
+        env = environment() | {
+            "TTS_LIFECYCLE_TARGETS": '{"home": ["gpu", "irodori"], "local": null}',
+            "TTS_LIFECYCLE_LOCAL_ONLY": "local",
+            "TTS_LIFECYCLE_UNMANAGED": "external",
+        }
+        profile, _ = build_profile.build(env, backends(), Path("/srv/data"))
+        config = profile["plugins"]["tts.lifecycle"]["config"]
+        self.assertEqual(config["targets"], {"home": ["gpu", "irodori"], "local": None})
+        self.assertEqual(config["local_only"], ["local"])
+        self.assertEqual(config["unmanaged_hosts"], ["external"])
+
     def test_unknown_backend_kind_is_reported_not_silently_kept(self):
         broken = {"backends": [{"id": "x", "kind": "unknown", "url": "http://127.0.0.1:1"}]}
         profile, summary = build_profile.build(environment(), broken, Path("/srv/data"))
