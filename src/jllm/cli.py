@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import io
+import logging
 import os
 import signal
 import sys
@@ -158,16 +159,27 @@ async def _run(plan, profile_path=None) -> int:
         else:
             await startup
             activation = asyncio.create_task(_activate(plan))
-            done, _ = await asyncio.wait(
-                (activation, shutdown),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if shutdown in done and not activation.done():
-                activation.cancel()
-                await asyncio.gather(activation, return_exceptions=True)
-            elif not can_reload:
-                # 直接呼び出し（テスト・単発起動）は従来どおり activate の完了で終わる。
-                await activation
+
+            def activation_done(task):
+                if task.cancelled() or task.exception() is None:
+                    return
+                logging.getLogger("jllm").error(
+                    "plugin activation failed", exc_info=task.exception()
+                )
+                stopped.set()
+
+            activation.add_done_callback(activation_done)
+            if not can_reload:
+                # 直接呼び出し（テスト・単発起動）は従来どおりの待ち方にする。
+                done, _ = await asyncio.wait(
+                    (activation, shutdown),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if shutdown in done and not activation.done():
+                    activation.cancel()
+                    await asyncio.gather(activation, return_exceptions=True)
+                else:
+                    await activation
             else:
                 # Discord の接続のように activate が戻らないプラグインがあるため、
                 # 完了を待たずに SIGHUP を待つ。
