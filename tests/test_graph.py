@@ -61,7 +61,7 @@ class GraphTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("digraph plugins {", out)
-        self.assertIn(chr(34) + "provider/main" + chr(34) + " -> " + chr(34) + "consumer/main" + chr(34), out)
+        self.assertIn('"provider/main" -> "consumer/main"', out)
 
 
 if __name__ == "__main__":
