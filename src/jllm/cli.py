@@ -49,6 +49,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     doctor = commands.add_parser("doctor", help="Check a profile and its dependencies")
     graph = commands.add_parser("graph", help="Print the resolved plugin map")
     graph.add_argument("--format", choices=("mermaid", "dot"), default="mermaid")
+    graph.add_argument(
+        "--from", dest="from_node", metavar="ID", help="Show one node's neighbourhood"
+    )
+    graph.add_argument("--depth", type=int, default=1, help="Hops for --from (default 1)")
     config = commands.add_parser("config", help="Inspect profile configuration")
     validate = config.add_subparsers(dest="action", required=True).add_parser("validate")
     for command in (parser, run, doctor, config, validate):
@@ -92,7 +96,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Configuration valid")
             return 0
         if args.command == "graph":
-            _print_graph(plan, args.format)
+            if args.from_node and args.from_node not in plan.nodes:
+                print(f"jllm: unknown plugin instance: {args.from_node}", file=sys.stderr)
+                return 1
+            _print_graph(plan, args.format, start=args.from_node, depth=max(1, args.depth))
             return 0
 
         blocked = False
@@ -110,34 +117,64 @@ def _graph_id(instance_id: str) -> str:
     return "".join(char if char.isalnum() else "_" for char in instance_id)
 
 
-def _print_graph(plan, fmt: str) -> None:
+def _graph_subset(plan, start: str | None, depth: int) -> list[str]:
+    """start から依存方向・被依存方向へ depth ホップの範囲を、表示順で返す。"""
+
+    if not start:
+        return list(plan.order)
+    seen = {start}
+    frontier = {start}
+    reverse: dict[str, set[str]] = {}
+    for node in plan.nodes.values():
+        for targets in node.bindings.values():
+            for target in targets:
+                reverse.setdefault(target, set()).add(node.id)
+    for _ in range(depth):
+        nxt = set()
+        for key in frontier:
+            for targets in plan.nodes[key].bindings.values():
+                nxt |= set(targets)
+            nxt |= reverse.get(key, set())
+        frontier = nxt - seen
+        seen |= frontier
+        if not frontier:
+            break
+    return [key for key in plan.order if key in seen]
+
+
+def _print_graph(plan, fmt: str, start: str | None = None, depth: int = 1) -> None:
     """解決済みの plan を依存グラフとして出す（Mermaid / Graphviz）。"""
 
+    order = _graph_subset(plan, start, depth)
     if fmt == "dot":
         print("digraph plugins {")
         print('  rankdir="LR";')
-        for key in plan.order:
+        for key in order:
             node = plan.nodes[key]
             shape = ", shape=hexagon" if node.critical else ""
             print(f'  "{key}" [label="{key}"{shape}];')
-        for key in plan.order:
+        for key in order:
             node = plan.nodes[key]
             for capability, targets in sorted(node.bindings.items()):
                 for target in targets:
+                    if target not in order:
+                        continue
                     print(f'  "{target}" -> "{key}" [label="{capability}"];')
         print("}")
         return
 
     print("graph LR")
     print("  %% 太枠 = critical（失敗すると起動を中止）")
-    for key in plan.order:
+    for key in order:
         node = plan.nodes[key]
         style = ":::critical" if node.critical else ""
         print(f'  {_graph_id(key)}["{key}"]{style}')
-    for key in plan.order:
+    for key in order:
         node = plan.nodes[key]
         for capability, targets in sorted(node.bindings.items()):
             for target in targets:
+                if target not in order:
+                    continue
                 print(f"  {_graph_id(target)} -->|{capability}| {_graph_id(key)}")
     print("  classDef critical stroke-width:3px")
 
