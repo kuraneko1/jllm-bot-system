@@ -113,6 +113,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
 
+#: ノードの系統ごとの色（読みやすさのため、図では塗り分ける）。
+_FAMILIES = (
+    ("adapter.", "adapter", "#dbeafe", "#2563eb", "入口"),
+    ("web.", "web", "#cffafe", "#0891b2", "Web"),
+    ("feature.", "feature", "#dcfce7", "#16a34a", "機能"),
+    ("dictionary.", "dictionary", "#ccfbf1", "#0d9488", "辞書"),
+    ("provider.tts.", "provider", "#ffedd5", "#ea580c", "TTSプロバイダ"),
+    ("tts.", "tts", "#fef3c7", "#d97706", "読み上げ"),
+    ("speech.", "speech", "#ede9fe", "#7c3aed", "音声処理"),
+    ("llm.", "llm", "#e0e7ff", "#4f46e5", "LLM"),
+    ("translation.", "translation", "#fae8ff", "#a21caf", "翻訳"),
+    ("storage.", "storage", "#e5e7eb", "#4b5563", "保存"),
+    ("policy.", "policy", "#f1f5f9", "#475569", "ポリシー"),
+    ("ops.", "ops", "#f1f5f9", "#475569", "運用"),
+)
+
+
+def _family(instance_id: str) -> str:
+    for prefix, name, _fill, _stroke, _label in _FAMILIES:
+        if instance_id.startswith(prefix):
+            return name
+    return "other"
+
+def _display_name(instance_id: str) -> str:
+    """1インスタンスだけのプラグインは /main を省いて読みやすくする。"""
+
+    return instance_id[: -len("/main")] if instance_id.endswith("/main") else instance_id
+
+
 def _graph_id(instance_id: str) -> str:
     return "".join(char if char.isalnum() else "_" for char in instance_id)
 
@@ -152,7 +181,7 @@ def _print_graph(plan, fmt: str, start: str | None = None, depth: int = 1) -> No
         for key in order:
             node = plan.nodes[key]
             shape = ", shape=hexagon" if node.critical else ""
-            print(f'  "{key}" [label="{key}"{shape}];')
+            print(f'  "{key}" [label="{_display_name(key)}"{shape}];')
         for key in order:
             node = plan.nodes[key]
             for capability, targets in sorted(node.bindings.items()):
@@ -165,10 +194,16 @@ def _print_graph(plan, fmt: str, start: str | None = None, depth: int = 1) -> No
 
     print("graph LR")
     print("  %% 太枠 = critical（失敗すると起動を中止）")
+    print(
+        '  %%{init: {"theme": "base", "themeVariables": {"fontSize": "16px", '
+        '  "edgeLabelBackground": "#ffffff", "lineColor": "#64748b"}, '
+        '"flowchart": {"nodeSpacing": 40, "rankSpacing": 70}}}%%'
+    )
     for key in order:
         node = plan.nodes[key]
-        style = ":::critical" if node.critical else ""
-        print(f'  {_graph_id(key)}["{key}"]{style}')
+        class_list = _family(key) + (",critical" if node.critical else "")
+        print(f'  {_graph_id(key)}["{_display_name(key)}"]')
+        print(f"  class {_graph_id(key)} {class_list}")
     for key in order:
         node = plan.nodes[key]
         for capability, targets in sorted(node.bindings.items()):
@@ -176,7 +211,11 @@ def _print_graph(plan, fmt: str, start: str | None = None, depth: int = 1) -> No
                 if target not in order:
                     continue
                 print(f"  {_graph_id(target)} -->|{capability}| {_graph_id(key)}")
-    print("  classDef critical stroke-width:3px")
+    print("  classDef critical stroke-width:4px,stroke:#b91c1c")
+    for _prefix, name, fill, stroke, _label in _FAMILIES:
+        print(f"  classDef {name} fill:{fill},stroke:{stroke},color:#0f172a")
+    family_labels = ", ".join(item[4] for item in _FAMILIES)
+    print(f"  %% 色: {family_labels}")
 
 
 async def _activate(plan) -> None:
