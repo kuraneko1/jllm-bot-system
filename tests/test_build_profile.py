@@ -112,6 +112,27 @@ class BuildProfileTests(unittest.TestCase):
         self.assertEqual(profile["plugins"]["feature.reader"]["config"]["allowed_channel_ids"],
                          [10, 11])
 
+    def test_effects_ir_falls_back_to_the_legacy_location(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = root / "data"
+            data.mkdir()
+            legacy = root / "services" / "ir" / "room.wav"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_bytes(b"RIFF")
+            profile, _ = build_profile.build(environment(), backends(), data)
+            config = profile["plugins"]["speech.effects"]["config"]
+            self.assertEqual(config["ir_path"], str(legacy))
+            self.assertEqual(profile["plugins"]["speech.playback"]["config"]["ir_path"],
+                             str(legacy))
+            own = data / "ir" / "room.wav"
+            own.parent.mkdir()
+            own.write_bytes(b"RIFF")
+            profile, _ = build_profile.build(environment(), backends(), data)
+            self.assertEqual(profile["plugins"]["speech.effects"]["config"]["ir_path"], str(own))
+
     def test_unknown_backend_kind_is_reported_not_silently_kept(self):
         broken = {"backends": [{"id": "x", "kind": "unknown", "url": "http://127.0.0.1:1"}]}
         profile, summary = build_profile.build(environment(), broken, Path("/srv/data"))

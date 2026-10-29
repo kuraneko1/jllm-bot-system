@@ -146,6 +146,15 @@ def build(env, backends, data_dir):
     def path(name):
         return str(data_dir / name)
 
+    def effects_ir():
+        """残響 IR は旧実装ではコード側にあり、data の外にあることが多い。"""
+
+        for candidate in (data_dir / "ir" / "room.wav",
+                          data_dir.parent / "services" / "ir" / "room.wav"):
+            if candidate.is_file():
+                return str(candidate)
+        return path("ir/room.wav")
+
     whitelist = items(env, "MESSAGE_CHANNEL_WHITELIST", int)
     owner = integer(env, "OWNER_ID", 0)
     approver = integer(env, "MEDIA_APPROVER_ID", 0)
@@ -198,7 +207,7 @@ def build(env, backends, data_dir):
         "volume": number(env, "DEFAULT_VOLUME", 0.2),
         "sample_volume": number(env, "SAMPLE_VOLUME", 0.2),
         "allow_nonverbal_emojis": flag(env, "ALLOW_NONVERBAL_EMOJIS", False),
-        "ir_path": path("ir/room.wav"),
+        "ir_path": effects_ir(),
         "duck_enabled": flag(env, "DUCK_ENABLED", False),
         "duck_curve_path": path("duck_curve.json"),
         "duck_level": number(env, "DUCK_LEVEL", 0.2),
@@ -215,7 +224,7 @@ def build(env, backends, data_dir):
     plugins["dictionary.reading"] = {
         "enabled": True, "config": {"data_file": path("readings.json")}
     }
-    plugins["speech.effects"] = {"enabled": True, "config": {"ir_path": path("ir/room.wav")}}
+    plugins["speech.effects"] = {"enabled": True, "config": {"ir_path": effects_ir()}}
     plugins["speech.playback"] = {"enabled": True, "config": playback}
     plugins["speech.text"] = {"enabled": True}
     plugins["voice.settings"] = {
