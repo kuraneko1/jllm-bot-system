@@ -1,4 +1,5 @@
 from .cog import MiqCog, MiqConfig
+from .command import normalize
 
 
 class Plugin:
@@ -12,7 +13,7 @@ class Plugin:
             max_chars=ctx.config.get("max_chars", 2000),
             size=ctx.config.get("size", "640x360"),
             text_align=ctx.config.get("text_align", "right"),
-            words=tuple(ctx.config.get("words", ["miq"])),
+            words=tuple(normalize(word) for word in ctx.config.get("words", ["miq"])),
         )
         self.cog = MiqCog(
             ctx.dependencies["discord.gateway"].bot,

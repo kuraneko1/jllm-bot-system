@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,62 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = cli.main(args)
         return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_explicit_environment_files_follow_legacy_priority(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"SHARED": "process", "PROCESS_ONLY": "present"}, clear=True
+        ):
+            env_file = Path(directory) / ".env"
+            policy_file = Path(directory) / "bot-policy.env"
+            env_file.write_text(
+                "SHARED=env\nENV_ONLY=from_env\nJLLM_PROFILE=env.yaml\n"
+                "TOKEN=synthetic-secret\nEXPANDED=${SHARED}\n", encoding="utf-8"
+            )
+            policy_file.write_text(
+                "SHARED=policy\nPOLICY_EXPANDED=${ENV_ONLY}\n", encoding="utf-8"
+            )
+            with (
+                patch("jllm.cli.discover", return_value={}),
+                patch("jllm.cli.load_profile") as load,
+                patch("jllm.cli.resolve", return_value=SimpleNamespace(nodes={})),
+            ):
+                code, out, err = self.run_cli(
+                    ["doctor", "--env-file", str(env_file), "--policy-file", str(policy_file)]
+                )
+            self.assertEqual(code, 0)
+            load.assert_called_once_with(Path("env.yaml"))
+            self.assertEqual(os.environ["SHARED"], "policy")
+            self.assertEqual(os.environ["EXPANDED"], "process")
+            self.assertEqual(os.environ["POLICY_EXPANDED"], "from_env")
+            self.assertEqual(os.environ["PROCESS_ONLY"], "present")
+            self.assertNotIn("synthetic-secret", out + err)
+
+    def test_no_automatic_dotenv_loading(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            path = Path(directory) / ".env"
+            path.write_text("JLLM_PROFILE=unexpected.yaml\n", encoding="utf-8")
+            with contextlib.chdir(directory), patch("jllm.cli.load_profile") as load:
+                code, _, _ = self.run_cli(["doctor"])
+            self.assertEqual(code, 1)
+            load.assert_not_called()
+
+    def test_bad_or_missing_file_is_safe_and_atomic(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            env_file = Path(directory) / ".env"
+            policy_file = Path(directory) / "policy"
+            env_file.write_text("TOKEN=synthetic-secret\n", encoding="utf-8")
+            for text in (None, "BAD=\"synthetic-secret\n"):
+                if text is not None:
+                    policy_file.write_text(text, encoding="utf-8")
+                with self.subTest(text=text), patch("jllm.cli.load_profile") as load:
+                    code, out, err = self.run_cli(
+                        ["--env-file", str(env_file), "doctor", "--policy-file", str(policy_file)]
+                    )
+                self.assertEqual(code, 1)
+                self.assertIn("cannot read or parse environment file", err)
+                self.assertNotIn("synthetic-secret", out + err)
+                self.assertNotIn("TOKEN", os.environ)
+                load.assert_not_called()
 
     @patch("jllm.cli.resolve", return_value=SimpleNamespace(nodes={}))
     @patch("jllm.cli.load_profile")

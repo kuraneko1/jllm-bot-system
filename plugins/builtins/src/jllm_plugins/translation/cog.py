@@ -17,7 +17,7 @@ from jllm_plugins.conversation.conversation import (
     conversation_pages,
     referenced_message,
 )
-from jllm_plugins.conversation.kitasan import KitasanService, is_kitasan_trigger
+from jllm_plugins.conversation.kitasan import KitasanService
 from jllm_plugins.conversation.sessions import SessionStore
 from jllm_plugins.conversation.talk_log import TalkLog
 from jllm_plugins.llm import llm_backend
@@ -52,6 +52,7 @@ class TranslationCogConfig:
     tts_switch_user_ids: frozenset[int] = frozenset()
 
 logger = logging.getLogger(__name__)
+_DEFAULT = object()
 
 
 def can_manage(user, owner_id=0):
@@ -403,8 +404,9 @@ class TranslationCog(commands.Cog):
         sessions=None,
         restrictions=None,
         conversation=None,
-        kitasan=None,
+        kitasan=_DEFAULT,
         config=None,
+        miq=_DEFAULT,
     ):
         self.bot = bot
         self.restrictions = restrictions or UserRestrictions()
@@ -424,11 +426,15 @@ class TranslationCog(commands.Cog):
         self.conversation = conversation or ConversationService(self.client)
         # 「今北産業」だけの投稿は、直前の投稿を3行に要約して返す（会話・翻訳とは別経路）。
         # クライアントは会話・翻訳と同じものを使い回す。
-        self.kitasan = kitasan or KitasanService(
-            self.client,
-            bot_id=getattr(getattr(bot, "user", None), "id", None),
-            restrictions=restrictions,
+        self.kitasan = (
+            KitasanService(
+                self.client,
+                bot_id=getattr(getattr(bot, "user", None), "id", None),
+                restrictions=restrictions,
+            )
+            if kitasan is _DEFAULT else kitasan
         )
+        self.miq = miq
         self.talk_pending = set()
         # いま話している相手（チャンネルID → (ユーザーID, 最終やり取りの時刻)）。
         # 会話を続けられるのはこの人だけ。別の人はメンションでは割り込めず、
@@ -1020,7 +1026,10 @@ class TranslationCog(commands.Cog):
         if self.restrictions.ignored(message.guild.id, message.author.id):
             return
         # 「miq」だけの投稿は引用画像の合図なので、会話としても読み上げとしても扱わない
-        if is_miq_trigger(message.content):
+        if (
+            is_miq_trigger(message.content) if self.miq is _DEFAULT
+            else self.miq is not None and self.miq.matches_trigger(message.content)
+        ):
             return
         if (
             message.channel.id not in self.config.allowed_channel_ids
@@ -1028,7 +1037,7 @@ class TranslationCog(commands.Cog):
         ):
             return
         # 「今北産業」だけの投稿は、直前の投稿を3行に要約して返す（会話・翻訳より先に判定）
-        if is_kitasan_trigger(message.content):
+        if self.kitasan is not None and self.kitasan.matches_trigger(message.content):
             await self.kitasan.handle(message)
             return
         if self.settings.mode(message.guild.id, message.channel.id) == "talk":

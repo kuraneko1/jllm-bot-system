@@ -44,7 +44,9 @@ class MyTalkView(discord.ui.View):
         muted = player is not None and user_id in player.skip_users
 
         visible = [
-            (speaker_id, name) for speaker_id, name in speakers if name not in MYTALK_HIDDEN_VOICES
+            (speaker_id, name)
+            for speaker_id, name in speakers
+            if name not in cog.config.mytalk_hidden_voices
         ]
 
         options = [

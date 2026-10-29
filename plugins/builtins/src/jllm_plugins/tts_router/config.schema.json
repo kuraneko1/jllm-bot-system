@@ -1,7 +1,19 @@
 {
   "type": "object",
   "properties": {
+    "backend_ids": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "provider の完全IDを旧 tts-backends.json のIDへ対応付ける。指定時は全 provider を網羅する。",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "backend_displays": {
+      "type": "object",
+      "description": "provider の完全IDを旧設定の表示名へ対応付ける。未指定の provider は既定表示を使う。",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
     "state_file": {"type": "string", "default": "tts_state.json", "minLength": 1},
+    "require_existing_state": {"type": "boolean", "default": false, "description": "有効な既存の選択・配信方式・フェイルオーバー状態がなければ起動しない。"},
     "disabled_voices_path": {"type": "string", "default": "disabled_voices.json", "minLength": 1},
     "failover": {"type": "boolean", "default": true},
     "health_seconds": {"type": "number", "default": 30.0, "exclusiveMinimum": 0}

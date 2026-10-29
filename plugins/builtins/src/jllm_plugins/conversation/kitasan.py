@@ -233,12 +233,22 @@ async def summarize(client, history, max_tokens=256) -> str:
 class KitasanService:
     """トリガー投稿の履歴集め・要約・返信をまとめる。"""
 
-    def __init__(self, client, bot_id=None, restrictions=None, limit=None):
+    def __init__(
+        self, client, bot_id=None, restrictions=None, limit=None, *,
+        enabled=True, words=None, item_chars=None, max_chars=None,
+    ):
         self.client = client
         self.bot_id = bot_id
+        self.enabled = enabled
+        self.words = words
+        self.item_chars = item_chars
+        self.max_chars = max_chars
         # ``UserRestrictions`` か、それを返す呼び出し（``lambda: shared_restrictions(bot)``）
         self.restrictions = restrictions
         self.limit = limit
+
+    def matches_trigger(self, content) -> bool:
+        return is_kitasan_trigger(content, words=self.words, enabled=self.enabled)
 
     def _store(self):
         value = self.restrictions
@@ -268,6 +278,8 @@ class KitasanService:
             message,
             bot_id=self.bot_id,
             limit=self.limit,
+            item_chars=self.item_chars,
+            total_chars=self.max_chars,
             skip_ids=self.ignored_ids(message),
         )
 

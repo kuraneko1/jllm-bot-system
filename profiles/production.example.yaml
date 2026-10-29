@@ -1,0 +1,145 @@
+# 雛形。profiles.local/ にコピーして編集するまで本番で起動しない。
+# 同じ Discord トークンを使う旧 Bot と並行起動しない。切替時は旧 Bot を停止する。
+# トークンは DISCORD_TOKEN 環境変数で渡し、秘密・実 ID・実 URL はこのファイルに書かない。
+# 0 は実在しないチャンネルの仮値。reader と translation の両方を許可対象に置き換える。
+# 空配列の意味は機能ごとに異なるため、許可対象を空にして無制限化しない。
+# Discord のコマンド権限と独立機能のアクセス範囲も別途確認する。
+# dashboard は loopback 専用。既存パスキーと同じ保存データを事前に用意する。
+# data/tts_state.json と data/toggles.json は移行元の実状態を事前に用意する。
+# 前者のバックエンド ID は binding または backend_ids と一致させ、後者は img/wav を真偽値で指定。
+# 例の provider ID は仮値であり、本番状態を推測して生成しない。
+# 公開する場合は認証・TLS・WebAuthn の RP ID / origin と逆プロキシを別途設計する。
+# doctor は依存関係だけを検査し、パスキーや接続先の実在・安全性は検査しない。
+# TTS は仮のローカル Voicevox 1系統のみ。実際の 9 系統はこの例には含まない。
+# 実運用では対応する provider の instances を追加し、tts.router の tts.provider
+# binding に各完全 ID を列挙する。旧状態の preferred ID を引き継ぐ場合は
+# tts.router.config.backend_ids に全 provider の完全 ID と一意な旧 ID を対応付ける。
+# binding の順序が既定の優先順。永続状態の preferred / active があればそちらを使う。
+# /tts やダッシュボードで切替可能。永続状態の failover 設定はこの雛形より優先される。
+# TTS9 系の種類・URL・声・旧 ID と failover 方針は運用環境で確認する。
+# 以下は別途設定する複数 instance と binding の形だけの例（9系統の実設定ではない）。
+# provider.tts.voicevox:
+#   instances:
+#     example: {url: "http://127.0.0.1:50021"}
+#     example2: {url: "http://127.0.0.1:50022"}
+# tts.router.config.backend_ids: {provider.tts.voicevox/example: example-old-1,
+#                                 provider.tts.voicevox/example2: example-old-2}
+# bindings.tts.router.tts.provider: [provider.tts.voicevox/example, provider.tts.voicevox/example2]
+# ドット区切りは設定の場所の説明であり、YAML のキーとしてそのまま追加しない。
+profile: production-example
+plugins:
+  storage.local:
+    enabled: true
+    config:
+      data_dir: data
+  policy.restrictions:
+    enabled: true
+  adapter.discord:
+    enabled: true
+    critical: true
+    config:
+      token_env: DISCORD_TOKEN
+  provider.tts.voicevox:
+    enabled: true
+    instances:
+      example:
+        url: http://127.0.0.1:50021
+  tts.router:
+    enabled: true
+    critical: true
+    config:
+      state_file: tts_state.json
+      require_existing_state: true
+      failover: false
+      health_seconds: 30
+  dictionary.sound:
+    enabled: true
+  dictionary.reading:
+    enabled: true
+  speech.effects:
+    enabled: true
+  speech.playback:
+    enabled: true
+  voice.settings:
+    enabled: true
+  speech.text:
+    enabled: true
+  feature.bookmarks:
+    enabled: true
+  dictionary.media:
+    enabled: true
+  feature.html-library:
+    enabled: true
+  tts.lifecycle:
+    enabled: true
+  ops.vram:
+    enabled: true
+  feature.miq:
+    enabled: true
+  feature.umigame:
+    enabled: true
+  imagegen.anima:
+    enabled: true
+  feature.reader:
+    enabled: true
+    critical: true
+    config:
+      toggles_path: data/toggles.json
+      require_existing_toggles: true
+      allowed_channel_ids: [0]
+      default_speed: 1.2
+      max_message_length: 200
+      vc_announcement_enabled: true
+      wav_enabled: true
+      read_mode: tts
+  provider.llm.sarashina:
+    enabled: true
+    instances:
+      example:
+        api_url: http://127.0.0.1:8082
+        model: sarashina3-mini
+  llm.router:
+    enabled: true
+    config:
+      backend: sarashina
+      sarashina:
+        api_url: http://127.0.0.1:8082
+        model: sarashina3-mini
+  llm.controller:
+    enabled: true
+  store.sessions:
+    enabled: true
+  web.safe-fetch:
+    enabled: true
+  feature.conversation:
+    enabled: true
+  feature.kitasan:
+    enabled: true
+  feature.talk-log:
+    enabled: true
+  feature.translation:
+    enabled: true
+    config:
+      allowed_channel_ids: [0]
+      talk_mention_gate: session
+  feature.wavrank:
+    enabled: true
+    config:
+      data_dir: data
+      # 実際の export の対象 ID とデータの配置をローカルコピーで設定する。
+      channel_id: "0"
+  web.dashboard:
+    enabled: true
+    critical: true
+    config:
+      host: 127.0.0.1
+      port: 8765
+      public_url: http://127.0.0.1:8765
+      require_existing_passkey: true
+bindings:
+  llm.router:
+    llm.provider:
+      - provider.llm.sarashina/example
+  tts.router:
+    tts.provider:
+      - provider.tts.voicevox/example

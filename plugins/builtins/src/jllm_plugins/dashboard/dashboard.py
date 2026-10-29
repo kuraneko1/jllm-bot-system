@@ -73,6 +73,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         host: str = "127.0.0.1",
         port: int = 8765,
         public_url: str | None = None,
+        require_existing_passkey: bool = False,
         config=None,
     ):
         self.config = config or DashboardConfig()
@@ -81,8 +82,6 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         self.tts = tts
         self.reader = reader
         self.sessions = sessions
-        # Webチャット（Discordの会話とは別のSQLite群）
-        self.webchat = webchat if webchat is not None else SessionStore(self.config.webchat_dir)
         self.webchat_client = webchat_client
         self._webchat_hits: dict[str, list[float]] = {}
         self.password_path = Path(password_file)
@@ -92,6 +91,11 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         self._runner: web.AppRunner | None = None
         self._voice_admin_lock = asyncio.Lock()
         self._init_passkeys(public_url)
+        self.require_existing_passkey = require_existing_passkey
+        if require_existing_passkey and not self._passkeys["credentials"]:
+            raise RuntimeError("既存の管理者パスキーが必要です。認証データの保存先を確認してください。")
+        # 認証情報を検証してから Web チャットの DB を作る。
+        self.webchat = webchat if webchat is not None else SessionStore(self.config.webchat_dir)
         self._init_voice_requests()
 
         # 実験場。ログイン不要で誰でも試せるので、回数制限をかける。

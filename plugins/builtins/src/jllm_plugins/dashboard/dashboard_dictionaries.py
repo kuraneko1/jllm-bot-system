@@ -210,7 +210,9 @@ class DictionaryAdmin:
         filename = f"dashboard-{secrets.token_hex(12)}.wav"
         target = dictionary.sounds_dir / filename
         try:
-            converted = await asyncio.to_thread(transcode_to_wav, content, suffix, target)
+            converted = await asyncio.to_thread(
+                transcode_to_wav, content, suffix, target, getattr(dictionary, "audio_config", None)
+            )
             if not converted or not target.is_file() or target.stat().st_size == 0:
                 return self._error("音声を変換できませんでした。", 422)
             if append:

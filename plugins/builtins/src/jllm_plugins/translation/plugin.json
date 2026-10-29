@@ -15,7 +15,8 @@
   "optional": [
     {"capability": "llm.controller", "version": 1, "cardinality": "optional_one"},
     {"capability": "feature.conversation", "version": 1, "cardinality": "optional_one"},
-    {"capability": "feature.kitasan", "version": 1, "cardinality": "optional_one"}
+    {"capability": "feature.kitasan", "version": 1, "cardinality": "optional_one"},
+    {"capability": "feature.miq", "version": 1, "cardinality": "optional_one"}
   ],
   "permissions": ["discord.commands", "discord.messages.read", "discord.messages.send"],
   "config_schema": "config.schema.json",

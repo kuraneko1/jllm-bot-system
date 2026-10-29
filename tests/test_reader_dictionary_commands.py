@@ -3,15 +3,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from jllm_plugins.reader.core import ReaderConfig
-
 from tests.test_reader_core import ReaderCoreTests
 
 
 class ReaderDictionaryCommandTests(ReaderCoreTests):
     def setUp(self):
         super().setUp()
-        self.cog.config = ReaderConfig(owner_id=99)
+        self.cog.config.owner_id = 99
 
     def interaction(self, user_id=99):
         return SimpleNamespace(
@@ -25,7 +23,7 @@ class ReaderDictionaryCommandTests(ReaderCoreTests):
         return SimpleNamespace(filename="sample.wav", read=AsyncMock(return_value=b"RIFFfake"))
 
     def transcode(self):
-        def convert(data, suffix, target):
+        def convert(data, suffix, target, config):
             Path(target).write_bytes(b"RIFFfake")
             return True
 

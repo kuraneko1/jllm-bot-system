@@ -74,7 +74,7 @@ def _forms(words: tuple[str, ...]):
     """単語ごとの正規表現・台帳・使い方の綴り（設定が変わらなければ使い回す）。"""
 
     word = words[0]
-    quoted = tuple(re.escape(item) for item in words)
+    quoted = tuple(re.escape(item) for item in sorted(words, key=len, reverse=True))
     repeat = re.compile(
         rf"(?P<rep>(?:{'|'.join(quoted)})+)(?P<num>\d+)?(?:\s+(?P<opts>.+))?",
         re.S,
@@ -102,7 +102,10 @@ def _forms(words: tuple[str, ...]):
 def parse(content: str, words=MIQ_WORDS) -> Command | None:
     """コマンドとして解釈できなければ None（＝ただの会話）。"""
 
-    repeat, catalog, help_words, word = _forms(tuple(words))
+    words = tuple(normalized for word in words if (normalized := normalize(word)))
+    if not words:
+        return None
+    repeat, catalog, help_words, _ = _forms(words)
     text = normalize(content)
 
     if not text:
@@ -133,7 +136,8 @@ def parse(content: str, words=MIQ_WORDS) -> Command | None:
 
         found[hit[0]] = hit[1]
 
-    count = max(1, min(MAX_COUNT, len(matched["rep"]) // len(word)))
+    word_pattern = "|".join(re.escape(item) for item in sorted(words, key=len, reverse=True))
+    count = min(MAX_COUNT, len(re.findall(word_pattern, matched["rep"])))
 
     return Command(
         "quote",

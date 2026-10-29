@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from jllm_plugins.reader.core import ReaderCog, ReaderConfig
+from jllm_plugins.reader.core import ReaderCog
 from jllm_plugins.tts_router.router import TTSRouter
 from jllm_plugins.vram_control.service import VramControlError
 from jllm_tts import TTSBackendError
@@ -13,7 +13,8 @@ from tests.test_reader_core import ReaderCoreTests
 class TTSCommandTests(ReaderCoreTests):
     def setUp(self):
         super().setUp()
-        self.cog.config = ReaderConfig(owner_id=99, tts_switch_user_ids=frozenset({42}))
+        self.cog.config.owner_id = 99
+        self.cog.config.tts_switch_user_ids = frozenset({42})
         self.cog.tts = Mock(spec=TTSRouter)
         self.cog.tts.disabled_voices = set()
         self.cog.tts.speakers = AsyncMock(

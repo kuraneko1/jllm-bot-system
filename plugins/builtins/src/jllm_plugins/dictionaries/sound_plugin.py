@@ -1,4 +1,4 @@
-from .dictionary import SoundDictionary
+from .dictionary import AudioProcessingConfig, SoundDictionary
 
 
 class Plugin:
@@ -7,6 +7,7 @@ class Plugin:
         self.dictionary = SoundDictionary(
             str(storage.legacy_path(ctx.config.get("data_file", "sounds.json"))),
             str(storage.legacy_path(ctx.config.get("sounds_dir", "sounds"))),
+            audio_config=AudioProcessingConfig(**ctx.config.get("audio_processing", {})),
         )
         return {"dictionary.sound": self.dictionary}
 

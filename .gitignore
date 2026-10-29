@@ -70,6 +70,9 @@ dist/
 .coverage
 htmlcov/
 
+# 生成した図・レポート（再生成できる）
+.archify/
+
 # OS / editor
 .DS_Store
 Thumbs.db

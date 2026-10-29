@@ -59,6 +59,8 @@ class VoiceSettings:
         self.forced_voices = JsonMap(
             storage.legacy_path(config.get("forced_voices_path", "forced_voices.json"))
         )
+        for voice_map in (self.user_voices, self.forced_voices):
+            voice_map.entries = {str(key): str(value) for key, value in voice_map.entries.items()}
         self.voice_entries = JsonMap(
             storage.legacy_path(config.get("announcement_history_path", "vc_announcements.json"))
         )

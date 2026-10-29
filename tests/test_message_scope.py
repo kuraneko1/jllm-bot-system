@@ -66,6 +66,15 @@ class MessageScopeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(file.filename, "v100.gif")
             file.close()
 
+    async def test_empty_whitelist_still_allows_global_reactions_only(self):
+        with patch.object(self.cog.config, "allowed_channel_ids", set()):
+            message = self.message(123, "v100")
+            await self.cog.on_message(message)
+        self.cog._send_media.assert_awaited_once_with(message, global_only=True)
+        self.cog._react_v100.assert_awaited_once_with(message)
+        self.cog._handle_html_registration.assert_not_awaited()
+        self.cog._handle_media_registration.assert_not_awaited()
+
     async def test_empty_lists_deny_every_message(self):
         with patch.object(self.cog.config, "allowed_channel_ids", set()), patch.object(
             self.cog.config, "global_reaction_words", set()

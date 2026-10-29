@@ -207,7 +207,9 @@ class SoundDictionary:
         self,
         data_path: str,
         sounds_dir: str,
+        audio_config: AudioProcessingConfig | None = None,
     ):
+        self.audio_config = audio_config or DEFAULT_AUDIO_CONFIG
         self.data_path = Path(data_path)
         self.sounds_dir = Path(sounds_dir)
         self.sounds_dir.mkdir(parents=True, exist_ok=True)

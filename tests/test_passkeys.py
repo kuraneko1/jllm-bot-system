@@ -129,6 +129,33 @@ class PasskeyTests(unittest.IsolatedAsyncioTestCase):
         await self.client.post('/api/logout')
         self.assertEqual((await self.client.post('/api/passkeys/login/options')).status, 404)
 
+    async def test_existing_passkey_mode_refuses_missing_and_empty_store(self):
+        def build():
+            return ReadingDashboard(
+                ReadingDictionary(str(self.root / 'readings.json')), SimpleNamespace(),
+                password_file=str(self.root / 'auth.json'), public_url='http://localhost',
+                require_existing_passkey=True,
+            )
+
+        with self.assertRaisesRegex(RuntimeError, '既存の管理者パスキー'):
+            build()
+        self.dashboard._save_passkeys(self.dashboard._passkeys)
+        with self.assertRaisesRegex(RuntimeError, '既存の管理者パスキー'):
+            build()
+        await self.register()
+        secured = build()
+        self.assertEqual(len(secured._passkeys['credentials']), 1)
+
+    async def test_existing_passkey_mode_cannot_delete_last_admin(self):
+        await self.register()
+        await self.login_passkey()
+        self.dashboard.require_existing_passkey = True
+        response = await self.client.delete('/api/passkeys', json={'id': encode(self.credential_id)})
+        self.assertEqual(response.status, 409)
+        self.assertEqual(len(self.build_dashboard()._passkeys['credentials']), 1)
+        await self.client.post('/api/logout')
+        self.assertEqual((await self.client.post('/api/passkeys/register/options')).status, 401)
+
     async def test_cross_origin_registration_blocked(self):
         response = await self.client.post('/api/passkeys/register/options', headers={'Origin': 'https://evil.example'})
         self.assertEqual(response.status, 403)

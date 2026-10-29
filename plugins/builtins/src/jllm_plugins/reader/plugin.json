@@ -17,6 +17,8 @@
     {"capability": "feature.html-library", "version": 1, "cardinality": "one"}
   ],
   "optional": [
+    {"capability": "feature.kitasan", "version": 1, "cardinality": "optional_one"},
+    {"capability": "feature.miq", "version": 1, "cardinality": "optional_one"},
     {"capability": "tts.lifecycle", "version": 1, "cardinality": "optional_one"},
     {"capability": "ops.vram", "version": 1, "cardinality": "optional_one"},
     {"capability": "imagegen.provider", "version": 1, "cardinality": "optional_one"},

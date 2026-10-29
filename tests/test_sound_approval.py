@@ -25,7 +25,7 @@ class SoundApprovalTests(unittest.IsolatedAsyncioTestCase):
         owner = patch.object(self.cog.config, 'owner_id', 42)
         owner.start()
         self.addCleanup(owner.stop)
-        def convert(data, suffix, target):
+        def convert(data, suffix, target, config):
             target.write_bytes(b'converted WAV')
             return True
         converter = patch('jllm_plugins.reader.core.transcode_to_wav', side_effect=convert)

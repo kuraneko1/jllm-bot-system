@@ -9,6 +9,18 @@ from tests.test_reader_core import ReaderCoreTests
 
 
 class ReaderPanelTests(ReaderCoreTests):
+    async def test_mytalk_hidden_voices_default_custom_and_empty(self):
+        speakers = [(1, "demo先輩"), (2, "淫夢(登録なし)"), (3, "clone")]
+        for hidden, expected in ((None, {"3"}), (frozenset({"clone"}), {"1", "2"}),
+                                 (frozenset(), {"1", "2", "3"})):
+            if hidden is not None:
+                self.cog.config.mytalk_hidden_voices = hidden
+            view = MyTalkView(self.cog, guild_id=1, user_id=42, speakers=speakers)
+            self.assertEqual(
+                {option.value for option in view.speaker_select.options} - {"mute", "default"},
+                expected,
+            )
+
     async def test_mytalk_select_apply_and_mute(self):
         self.cog.config = ReaderConfig()
         view = MyTalkView(

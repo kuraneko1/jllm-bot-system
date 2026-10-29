@@ -223,6 +223,8 @@ class PasskeyAdmin:
             credentials = [key for key in self._passkeys['credentials'] if key['id'] != data.get('id')]
             if len(credentials) == len(self._passkeys['credentials']):
                 return self._json_error('パスキーが見つかりません。', 404)
+            if self.require_existing_passkey and not credentials:
+                return self._json_error('最後の管理者パスキーは削除できません。', 409)
             try:
                 self._save_passkeys({**self._passkeys, 'credentials': credentials})
             except OSError:

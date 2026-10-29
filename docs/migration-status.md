@@ -12,9 +12,19 @@
 | Phase 4: LLM・会話 | 実装・mock検証済み | provider、router、読み上げモード、翻訳 Cog、会話・session・Kitasan。実 LLM・実 Discord は未確認 |
 | Phase 5: Web | 実装・mock/HTTP検証済み | 認証、共通 board、管理 API、各 panel。実ブラウザ・実公開環境は未確認 |
 | Phase 6: 独立機能 | 実装・互換/実画像検証済み | Miq、Umigame、Anima、D1、Playground。実フォントのMiq生成も確認 |
-| 本番 data 移行 | 未着手 | 実 data の走査、移行、逆変換、rollback は未実施 |
+| 本番 data 移行 | 部分調査・未移行 | 配置と規模は調査済み。全ファイルの所有者確認、移行、逆変換、rollback は未実施 |
 | 実 Discord・実音声 | 未検証 | 現在の検証は mock・fixture・clean install が中心 |
-| 最終互換監査 | 自動検証済み | 旧 tests の追加移植を含む1129件＋builtins 11件が成功。Ruff、wheel clean install、profile 検証も完了 |
+| 最終互換監査 | 自動検証済み | 旧 tests の追加移植を含む1275件＋builtins 11件が成功（2026-10-29 時点）。Ruff、wheel clean install、profile 検証も完了 |
+
+## 本番準備の追加作業（2026-10-29）
+
+- x230 の構成を読み取り調査し、[調査結果](x230-cutover-investigation.md) と [切り替え手順案](x230-cutover-runbook.md) を作成した。現地の本番データは変更していない。
+- Reader の許可リストと永続トグル、TTS の旧 ID・表示名・状態保護、Web パスキーと保存先、音声設定、Miq・今北産業の発火語、旧環境ファイル読み込みを改善し、合成データとモックを使った回帰テストを追加した。
+- 旧設定の移行先を [対応表](legacy-configuration-map.md) にまとめた。表は自動変換ではなく、未対応項目の確認も残る。
+- 停止中のデータを退避する [限定スナップショット](../tools/offline_snapshot.md) と [明示台帳のスナップショット](../tools/tree_snapshot.md) を追加した。どちらも停止確認・台帳の正しさ・全 writer の停止を運用者に委ね、本番データでの検証は未実施。
+- [統合プロファイルの雛形](../profiles/production.example.yaml) は 9 系統の実設定や ID を含まない。仮のデータと外部通信を禁止した環境で起動・停止を検証したもので、本番用設定ではない。
+- スナップショットと復元の手順・ツールは限定された条件下の準備段階であり、実本番データの一貫した退避・復元、書き込み後の逆移行、writer 排他は未検証。
+- 本番の設定変換、実 Discord・VC・TTS・LLM・Web の確認と切り替えは未実施。過去のテスト結果を本番互換の証明として扱わない。
 
 ## 旧環境の baseline
 

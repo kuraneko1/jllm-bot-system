@@ -354,6 +354,49 @@ class TTSRouterStreamingTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TTSBackendError):
             [chunk async for chunk in router.stream("あ", "test")]
 
+    async def test_qualified_ids_are_converted_to_legacy_ids_when_saved(self):
+        self.state.write_text(json.dumps({
+            "preferred": "provider/openai", "active": "provider/irodori",
+            "streaming": {"provider/openai": False}, "failover": False,
+        }), encoding="utf-8")
+        backends = {"drama3": StreamingFake("drama3"), "home": FakeBackend("home")}
+        router = TTSRouter(
+            specs(("drama3", "DRAMA3"), ("home", "Home")),
+            providers=backends, state_path=self.state,
+            id_aliases={"provider/openai": "drama3", "provider/irodori": "home"},
+        )
+        self.assertEqual((router.preferred, router.active), ("drama3", "home"))
+        self.assertFalse(router.streaming["drama3"])
+        router.set_failover(True)
+        saved = json.loads(self.state.read_text(encoding="utf-8"))
+        self.assertEqual(saved["preferred"], "drama3")
+        self.assertEqual(saved["active"], "home")
+        self.assertEqual(saved["streaming"], {"drama3": False})
+        # 同じID構成の旧方式ルーターでも変更後の状態を読める。
+        old_style = TTSRouter(specs(("drama3", "DRAMA3"), ("home", "Home")),
+                              providers=backends, state_path=self.state)
+        self.assertEqual((old_style.preferred, old_style.active), ("drama3", "home"))
+        self.assertFalse(old_style.streaming["drama3"])
+
+    async def test_unknown_or_conflicting_state_is_not_overwritten(self):
+        for payload in (
+            {"preferred": "missing"},
+            {"streaming": {"provider/openai": True, "drama3": False}},
+            {"streaming": {"missing": False}},
+        ):
+            original = json.dumps(payload)
+            self.state.write_text(original, encoding="utf-8")
+            with self.subTest(payload=payload), self.assertRaises(TTSBackendError):
+                TTSRouter(specs(("drama3", "DRAMA3")),
+                          providers={"drama3": StreamingFake("drama3")},
+                          state_path=self.state, id_aliases={"provider/openai": "drama3"})
+            self.assertEqual(self.state.read_text(encoding="utf-8"), original)
+        self.state.write_text("{broken", encoding="utf-8")
+        with self.assertRaises(TTSBackendError):
+            TTSRouter(specs(("drama3", "DRAMA3")),
+                      providers={"drama3": StreamingFake("drama3")}, state_path=self.state)
+        self.assertEqual(self.state.read_text(encoding="utf-8"), "{broken")
+
     async def test_stream_mode_can_be_set_to_wav_and_is_remembered(self):
         router = self.make_router({"drama3": StreamingFake("drama3"), "z170": FakeBackend("z170")})
 

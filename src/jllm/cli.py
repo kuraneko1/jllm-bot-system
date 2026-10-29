@@ -4,13 +4,36 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import os
 import signal
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from dotenv import load_dotenv
+from dotenv.parser import parse_stream
+
 from jllm.kernel import Kernel, ProfileError, discover, load_profile, resolve
+
+
+def _load_env_files(env_file: Path | None, policy_file: Path | None) -> None:
+    streams = []
+    try:
+        for path in (env_file, policy_file):
+            if path is None:
+                streams.append(None)
+                continue
+            stream = io.StringIO(path.read_text(encoding="utf-8"))
+            if any(binding.error for binding in parse_stream(stream)):
+                raise ValueError
+            stream.seek(0)
+            streams.append(stream)
+    except (OSError, UnicodeError, ValueError):
+        raise ValueError("cannot read or parse environment file") from None
+    for stream, override in zip(streams, (False, True), strict=True):
+        if stream is not None:
+            load_dotenv(stream=stream, override=override)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -25,6 +48,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     doctor = commands.add_parser("doctor", help="Check a profile and its dependencies")
     config = commands.add_parser("config", help="Inspect profile configuration")
     validate = config.add_subparsers(dest="action", required=True).add_parser("validate")
+    for command in (parser, run, doctor, config, validate):
+        command.add_argument(
+            "--env-file", type=Path, default=argparse.SUPPRESS,
+            help="Load an explicit dotenv file without overriding the environment",
+        )
+        command.add_argument(
+            "--policy-file", type=Path, default=argparse.SUPPRESS,
+            help="Load an explicit trusted policy dotenv file, overriding the environment",
+        )
     for command in (run, doctor, config, validate):
         command.add_argument(
             "--profile", dest="profile_option", type=Path, default=argparse.SUPPRESS
@@ -34,6 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     try:
+        _load_env_files(getattr(args, "env_file", None), getattr(args, "policy_file", None))
         if args.command == "plugins":
             for plugin_id, manifest in sorted(discover().items()):
                 print(f"{plugin_id}\t{manifest.version}")

@@ -33,7 +33,8 @@ class ForceVoiceTests(ReaderCoreTests):
 class BookmarkTests(ReaderCoreTests):
     def setUp(self):
         super().setUp()
-        self.cog.config = ReaderConfig(owner_id=99, bookmark_reaction="🔖")
+        self.cog.config.owner_id = 99
+        self.cog.config.bookmark_reaction = "🔖"
         self.cog.bookmarks = BookmarkStore(self.root / "bookmarks.json")
         self.cog.bookmark_rules = parse_emoji_spec("🔖")
 

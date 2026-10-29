@@ -97,6 +97,40 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         message.reply.assert_not_awaited()
         self.assertEqual(self.client.requests, [])
 
+    async def test_injected_miq_words_control_conversation_exclusion(self):
+        from jllm_plugins.miq.cog import MiqCog, MiqConfig
+
+        self.cog.miq = MiqCog(self.bot, config=MiqConfig(words=("quote",)))
+        self.cog.enqueue_talk = AsyncMock()
+        await self.cog.on_message(self.message(mid=152, text="quote"))
+        self.cog.enqueue_talk.assert_not_awaited()
+        await self.cog.on_message(self.message(mid=153, text="miq"))
+        self.cog.enqueue_talk.assert_awaited_once()
+        self.cog.enqueue_talk.reset_mock()
+        self.cog.miq = None
+        await self.cog.on_message(self.message(mid=154, text="quote"))
+        self.cog.enqueue_talk.assert_awaited_once()
+
+    async def test_injected_kitasan_can_be_disabled_or_customize_trigger(self):
+        from jllm_plugins.conversation.kitasan import KitasanService
+
+        self.cog.enqueue_talk = AsyncMock()
+        self.cog.kitasan = KitasanService(self.client, words=("summary",), enabled=True)
+        self.cog.kitasan.handle = AsyncMock()
+        await self.cog.on_message(self.message(mid=155, text="summary"))
+        self.cog.kitasan.handle.assert_awaited_once()
+        self.cog.enqueue_talk.assert_not_awaited()
+        await self.cog.on_message(self.message(mid=156, text="今北産業"))
+        self.cog.enqueue_talk.assert_awaited_once()
+        self.cog.enqueue_talk.reset_mock()
+        self.cog.kitasan.enabled = False
+        await self.cog.on_message(self.message(mid=157, text="summary"))
+        self.cog.enqueue_talk.assert_awaited_once()
+        self.cog.enqueue_talk.reset_mock()
+        self.cog.kitasan = None
+        await self.cog.on_message(self.message(mid=158, text="今北産業"))
+        self.cog.enqueue_talk.assert_awaited_once()
+
     async def test_miq_with_extra_text_still_talks(self):
         message = self.message(mid=151, text='<@99> miq ってなに？')
         await self.cog.on_message(message)

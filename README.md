@@ -67,6 +67,8 @@ cp profiles/reader.yaml profiles.local/reader.yaml
 
 `.env` と `profiles.local/` は Git の管理外です。実際のトークンや個人設定を書き込んで問題ありません。設定例には秘密情報を書かないでください。
 
+旧環境と異なり、設定ファイルは自動読込しません。以下では `--env-file .env` で明示的に読み込みます。旧運用の `bot-policy.env` も使う場合は `--policy-file` を追加してください。優先順位は policy、プロセス環境、env ファイルの順です。これらのファイルだけで profile の各機能設定が自動的に移行されるわけではありません。
+
 次のコマンドでプラグインと設定を確認できます。
 
 ```bash
@@ -78,10 +80,12 @@ uv run jllm doctor --profile profiles.local/reader.yaml
 起動は次のコマンドです。
 
 ```bash
-uv run jllm run --profile profiles.local/reader.yaml
+uv run jllm run --profile profiles.local/reader.yaml --env-file .env
 ```
 
-`profiles/` には、読み上げ・翻訳・ウェブ管理・独立機能などの構成例を置いています。実際の運用では、必要な構成を `profiles.local/` に複製して使います。
+`profiles/` には、読み上げ・翻訳・ウェブ管理・独立機能などの構成例を置いています。実際の運用では、必要な構成を `profiles.local/` に複製して使います。[本番向け統合構成の雛形](profiles/production.example.yaml) は仮の設定であり、そのまま本番には使用できません。旧本番との設定・保存先を対応付け、復旧手順と実環境での動作を確認してください。
+
+`doctor` はプラグインの依存関係を検査しますが、トークン、外部 API、実音声、Web 認証の動作は検査しません。
 
 ## WavRank の動作例
 
@@ -91,7 +95,7 @@ uv run jllm run --profile profiles.local/reader.yaml
 mkdir -p profiles.local
 cp profiles/wavrank.yaml profiles.local/wavrank.yaml
 # profiles.local/wavrank.yaml のチャンネルとデータの場所を編集
-uv run jllm run --profile profiles.local/wavrank.yaml
+uv run jllm run --profile profiles.local/wavrank.yaml --env-file .env
 ```
 
 `data/exports/<channel>/messages.jsonl`、音声辞書、フォントなどの実行データは別途用意します。実データをリポジトリへコピーしないでください。
@@ -129,6 +133,9 @@ tools/                   検査とデータ移行の道具
 - [全体再設計書](PLUGIN_ARCHITECTURE.md)
 - [プラグイン開発案内](docs/plugin-development.md)
 - [互換性の状況](docs/migration-status.md)
+- [旧設定の対応表](docs/legacy-configuration-map.md)
+- [x230 の本番入れ替え調査](docs/x230-cutover-investigation.md)
+- [本番切り替え手順書（未実施）](docs/x230-cutover-runbook.md)
 - [開発参加案内](CONTRIBUTING.md)
 - [安全方針](SECURITY.md)
 

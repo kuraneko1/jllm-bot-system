@@ -1,7 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "words": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": ["miq"]},
+    "words": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "\\S"}, "default": ["miq"]},
     "layout": {"type": "string", "default": "auto"},
     "size": {"type": "string", "default": "640x360"},
     "text_align": {"type": "string", "enum": ["left", "center", "right"], "default": "right"},

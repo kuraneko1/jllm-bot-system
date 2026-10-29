@@ -24,6 +24,7 @@ from jllm_plugins.bookmarks import (
     jump_url,
     parse_emoji_spec,
 )
+from jllm_plugins.conversation.kitasan import is_kitasan_trigger
 from jllm_plugins.dictionaries.dictionary import transcode_to_wav
 from jllm_plugins.ducking import VOICE_RECV_AVAILABLE, voice_recv
 from jllm_plugins.imagegen.control import NoImageGenController
@@ -38,7 +39,7 @@ from jllm_plugins.voice_settings.join_voice import JoinVoiceCache
 from jllm_plugins.vram_control.service import NoVramController, VramControlError, vram_summary
 
 from .media import HtmlApprovalView, MediaApprovalView, SoundApprovalView
-from .panels import BookmarkView, ForceVoiceView, MyTalkView, RestrictView
+from .panels import MYTALK_HIDDEN_VOICES, BookmarkView, ForceVoiceView, MyTalkView, RestrictView
 
 logger = logging.getLogger(__name__)
 URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -47,6 +48,8 @@ COLON_TOKEN_PATTERN = re.compile(r":[^:\s]+:")
 SKIP_WORDS = {"s", "ｓ"}
 SKIP_PREFIXES = (";", ":")
 SKIP_REACTION = "⏩"
+KITASAN_DEFAULT = object()
+MIQ_DEFAULT = object()
 V100_EMOJI_NAMES = ("Teslav100", "v100_gif", "v100_spin")
 EMOJI_RANGES = (
     (0x1F000, 0x1FAFF),
@@ -118,10 +121,6 @@ def media_trigger_match(content: str, trigger: str) -> bool:
     return re.search(r"(?:^|\s)" + re.escape(folded) + r"(?:\s|$)", content.casefold()) is not None
 
 
-def is_kitasan_trigger(content: str) -> bool:
-    return content.strip().casefold() in {"今北産業", "今北", "きたさん"}
-
-
 def duck_voice_client_class():
     if not VOICE_RECV_AVAILABLE:
         return None
@@ -150,10 +149,12 @@ class ReaderConfig:
     duck_enabled: bool = False
     owner_id: int = 0
     default_speaker: int = 1
+    mytalk_hidden_voices: frozenset[str] = frozenset(MYTALK_HIDDEN_VOICES)
     bookmark_reaction: str = ""
     bookmark_notify: bool = True
     tts_switch_user_ids: frozenset[int] = frozenset()
     toggles_path: str = "data/toggles.json"
+    require_existing_toggles: bool = False
     dashboard_url: str = "http://127.0.0.1:8765"
     forced_voices_path: str = "data/forced_voices.json"
     user_voices_path: str = "data/user_voices.json"
@@ -163,7 +164,7 @@ class ReaderConfig:
     vc_announcement_history_path: str = "data/vc_announcements.json"
 
     def channel_allowed(self, channel_id: int) -> bool:
-        return not self.allowed_channel_ids or channel_id in self.allowed_channel_ids
+        return channel_id in self.allowed_channel_ids
 
 
 class ReaderCog(commands.Cog):
@@ -195,11 +196,15 @@ class ReaderCog(commands.Cog):
         vram=None,
         imagegen=None,
         imagegen_controller=None,
+        kitasan=KITASAN_DEFAULT,
+        miq=MIQ_DEFAULT,
     ):
         self.bot = bot
         self.tts = tts
         self.player_factory = player_factory
         self.settings = settings
+        self.voice_speeds = settings.speeds
+        self.voice_volumes = settings.volumes
         self.dictionary = dictionary
         self.readings = readings
         self.restrictions = restrictions
@@ -210,7 +215,8 @@ class ReaderCog(commands.Cog):
         self.vram = vram or NoVramController()
         self.imagegen = imagegen
         self.imagegen_controller = imagegen_controller or NoImageGenController()
-        self.toggles = {"img": True, "wav": True}
+        self.kitasan = kitasan
+        self.miq = miq
         self.html_dir = html_store.html_dir if html_store is not None else Path("html")
         self.pending_html = html_store.pending if html_store is not None else {}
         self.html_catalog = html_store.catalog if html_store is not None else []
@@ -225,8 +231,8 @@ class ReaderCog(commands.Cog):
         )
         self.bookmark_rules = parse_emoji_spec(config.bookmark_reaction)
         self.players: dict[int, SpeechPlayer] = {}
-        self.voice_entries = settings.voice_entries.entries
-        self.toggles = {"img": True, "wav": config.wav_enabled}
+        self.voice_entries = self._load_voice_entries()
+        self.toggles = self._load_toggles()
 
     @property
     def user_voices(self):
@@ -249,7 +255,9 @@ class ReaderCog(commands.Cog):
             data = json.loads(Path(self.config.user_voices_path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        self.user_voices = data if isinstance(data, dict) else {}
+        self.user_voices = (
+            {str(key): str(value) for key, value in data.items()} if isinstance(data, dict) else {}
+        )
         return self.user_voices
 
     def _save_user_voices(self):
@@ -283,7 +291,9 @@ class ReaderCog(commands.Cog):
             data = json.loads(Path(self.config.forced_voices_path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        self.forced_voices = data if isinstance(data, dict) else {}
+        self.forced_voices = (
+            {str(key): str(value) for key, value in data.items()} if isinstance(data, dict) else {}
+        )
         return self.forced_voices
 
     def _save_forced_voices(self):
@@ -311,21 +321,25 @@ class ReaderCog(commands.Cog):
 
     def _load_voice_entries(self):
         if "settings" in self.__dict__:
-            return self.settings.voice_entries.entries
-        try:
-            data = json.loads(
-                Path(self.config.vc_announcement_history_path).read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError):
-            data = {}
+            data = self.settings.voice_entries.entries
+        else:
+            try:
+                data = json.loads(
+                    Path(self.config.vc_announcement_history_path).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                data = {}
         if not isinstance(data, dict):
             data = {}
         cutoff = time.time() - self.config.vc_announcement_cooldown_seconds
         self.voice_entries = {
-            str(key): float(value)
+            key: float(value)
             for key, value in data.items()
-            if isinstance(value, (int, float)) and math.isfinite(value) and value >= cutoff
+            if isinstance(key, str) and isinstance(value, (int, float))
+            and not isinstance(value, bool) and math.isfinite(value) and value >= cutoff
         }
+        if "settings" in self.__dict__:
+            self.settings.voice_entries.entries = self.voice_entries
         return self.voice_entries
 
     def _read_mode(self):
@@ -673,7 +687,17 @@ class ReaderCog(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.guild is None or message.author.bot or self._restricted(message, "ignore"):
             return
-        if is_miq_trigger(message.content) or is_kitasan_trigger(message.content):
+        kitasan = getattr(self, "kitasan", KITASAN_DEFAULT)
+        is_kitasan = (
+            is_kitasan_trigger(message.content) if kitasan is KITASAN_DEFAULT
+            else kitasan is not None and kitasan.matches_trigger(message.content)
+        )
+        miq = getattr(self, "miq", MIQ_DEFAULT)
+        is_miq = (
+            is_miq_trigger(message.content) if miq is MIQ_DEFAULT
+            else miq is not None and miq.matches_trigger(message.content)
+        )
+        if is_miq or is_kitasan:
             return
         channel_allowed = self.config.channel_allowed(message.channel.id)
         content = message.content.casefold()
@@ -1060,7 +1084,10 @@ class ReaderCog(commands.Cog):
         suffix = Path(file.filename or "").suffix.lower() or ".wav"
         try:
             data = await file.read()
-            converted = await asyncio.to_thread(transcode_to_wav, data, suffix, target)
+            converted = await asyncio.to_thread(
+                transcode_to_wav, data, suffix, target,
+                getattr(self.dictionary, "audio_config", None),
+            )
         except Exception:
             logger.exception("音声登録ファイルの読み込み・変換に失敗")
             converted = False
@@ -1360,6 +1387,31 @@ class ReaderCog(commands.Cog):
             "あり" if result.get("lifecycle") else "なし",
         )
         await interaction.followup.send(note, ephemeral=True)
+
+    def _load_toggles(self):
+        toggles = {"img": True, "wav": self.config.wav_enabled}
+        path = Path(self.config.toggles_path)
+        if not path.exists():
+            if self.config.require_existing_toggles:
+                raise RuntimeError("機能トグルの保存ファイルが見つかりません。")
+            return toggles
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            if self.config.require_existing_toggles:
+                raise RuntimeError("機能トグルの保存ファイルを読み込めません。") from exc
+            logger.exception("toggles.json の読み込みに失敗")
+            return toggles
+        if self.config.require_existing_toggles and (
+            not isinstance(data, dict)
+            or any(not isinstance(data.get(key), bool) for key in toggles)
+        ):
+            raise RuntimeError("機能トグルの保存ファイルが不正です。")
+        if isinstance(data, dict):
+            for key in toggles:
+                if key in data:
+                    toggles[key] = bool(data[key])
+        return toggles
 
     def _save_toggles(self):
         path = Path(self.config.toggles_path)
@@ -1741,9 +1793,14 @@ class Plugin:
             duck_enabled=ctx.config.get("duck_enabled", False),
             owner_id=ctx.config.get("owner_id", 0),
             default_speaker=ctx.config.get("default_speaker", 1),
+            mytalk_hidden_voices=frozenset(
+                ctx.config.get("mytalk_hidden_voices", MYTALK_HIDDEN_VOICES)
+            ),
             bookmark_reaction=ctx.config.get("bookmark_reaction", ""),
             bookmark_notify=ctx.config.get("bookmark_notify", True),
             tts_switch_user_ids=frozenset(ctx.config.get("tts_switch_user_ids", [])),
+            toggles_path=ctx.config.get("toggles_path", "data/toggles.json"),
+            require_existing_toggles=ctx.config.get("require_existing_toggles", False),
             dashboard_url=ctx.config.get("dashboard_url", "http://127.0.0.1:8765"),
             forced_voices_path=ctx.config.get("forced_voices_path", "data/forced_voices.json"),
             user_voices_path=ctx.config.get("user_voices_path", "data/user_voices.json"),
@@ -1771,6 +1828,8 @@ class Plugin:
             vram=ctx.dependencies.get("ops.vram"),
             imagegen=ctx.dependencies.get("imagegen.provider"),
             imagegen_controller=ctx.dependencies.get("imagegen.controller"),
+            kitasan=ctx.dependencies.get("feature.kitasan"),
+            miq=ctx.dependencies.get("feature.miq"),
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)
         ctx.scope.add(remove)

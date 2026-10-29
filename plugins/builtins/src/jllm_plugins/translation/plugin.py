@@ -31,6 +31,7 @@ class Plugin:
             restrictions=ctx.dependencies["policy.restrictions"],
             conversation=ctx.dependencies.get("feature.conversation"),
             kitasan=ctx.dependencies.get("feature.kitasan"),
+            miq=ctx.dependencies.get("feature.miq"),
             config=config,
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)

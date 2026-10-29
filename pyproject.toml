@@ -9,6 +9,7 @@ authors = [{ name = "kuraneko1" }]
 dependencies = [
     "PyYAML>=6.0.3,<7",
     "jsonschema>=4.25,<5",
+    "python-dotenv>=1,<2",
 ]
 
 [project.scripts]

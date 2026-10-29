@@ -32,6 +32,13 @@ plugins:
   tts.router:
     enabled: true
     config:
+      # 旧版との切替時は全 provider に旧 tts-backends.json の id を指定する。
+      # 値は例。旧設定を確認し、一意な実際の ID に置き換えること。
+      # backend_ids:
+      #   provider.tts.irodori/home: home
+      #   provider.tts.speechcpp/local: spare
+      #   provider.tts.openai/drama3: drama3
+      #   provider.tts.voicevox/local: local
       failover: true
       health_seconds: 30
 bindings:

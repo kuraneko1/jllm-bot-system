@@ -137,6 +137,9 @@ class MiqCog(commands.Cog):
         self._catalog: list | None = None
         self._catalog_lock = asyncio.Lock()
 
+    def matches_trigger(self, content: str) -> bool:
+        return parse_command(content, self.config.words) is not None
+
     async def cog_load(self):
         """初回の描画レイテンシを減らすため、フォント・辞書・各構図を先に温める。
 
@@ -250,7 +253,7 @@ class MiqCog(commands.Cog):
         if message.author.bot or not message.guild:
             return
 
-        command = parse_command(message.content)
+        command = parse_command(message.content, self.config.words)
 
         if command is None:
             return
@@ -272,7 +275,7 @@ class MiqCog(commands.Cog):
         word = self.config.words[0]
 
         if command.kind == "help":
-            await self._notice(message, usage())
+            await self._notice(message, usage(self.config.words))
             return
 
         if command.kind == "catalog":

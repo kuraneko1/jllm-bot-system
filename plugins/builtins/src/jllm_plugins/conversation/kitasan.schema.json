@@ -1,5 +1,11 @@
 {
   "type": "object",
-  "properties": {"messages": {"type": "integer", "default": 100, "minimum": 1}},
+  "properties": {
+    "enabled": {"type": "boolean", "default": true},
+    "words": {"type": "array", "items": {"type": "string"}, "default": ["今北産業"]},
+    "messages": {"type": "integer", "default": 100, "minimum": 1},
+    "item_chars": {"type": "integer", "default": 300, "minimum": 20},
+    "max_chars": {"type": "integer", "default": 4000, "minimum": 100}
+  },
   "additionalProperties": false
 }

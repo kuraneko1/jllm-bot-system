@@ -1,5 +1,7 @@
 profile: umigame
 plugins:
+  storage.local:
+    enabled: true
   adapter.discord:
     enabled: true
     critical: true

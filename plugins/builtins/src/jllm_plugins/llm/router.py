@@ -4,8 +4,11 @@ from .translation import SwitchableClient, build_translation_client
 
 class RoutedSwitchableClient(SwitchableClient):
     async def switch(self, backend):
+        if backend not in llm_backend.BACKENDS:
+            raise ValueError("不明なバックエンドです。")
         result = await super().switch(backend)
-        llm_backend.set_selection(backend)
+        if llm_backend.stored()["backend"] != backend:
+            llm_backend.set_selection(backend)
         return result
 
 
@@ -33,7 +36,7 @@ class Plugin:
             "atmos": dict(ctx.config.get("atmos", {})),
         }
         self.client = RoutedSwitchableClient(
-            backend=backend,
+            backend=llm_backend.snapshot()["global_backend"],
             factory=lambda name: build_translation_client(name, configs.get(name, {})),
         )
         self.state = LLMState()

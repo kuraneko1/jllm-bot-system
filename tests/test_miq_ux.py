@@ -172,6 +172,13 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(parse("quote12", ("quote",)), Command("quote", layout=12))
         self.assertIsNone(parse("miq", ("quote",)))
 
+    def test_custom_words_normalize_and_count_each_alias(self):
+        self.assertEqual(parse("ＭＩＱquote2", (" MIQ ", "quote")),
+                         Command("quote", count=2, layout=2))
+        self.assertEqual(parse("quotequote", ("miq", "quote")), Command("quote", count=2))
+        self.assertIsNone(parse("miq", ()))
+        self.assertIsNone(parse("miq", (" ",)))
+
     def test_usage_mentions_the_word(self):
         self.assertIn("miq台帳", usage())
 
@@ -237,6 +244,17 @@ class CogTests(unittest.IsolatedAsyncioTestCase):
         await self.cog.on_message(command_message)
 
         return command_message
+
+    async def test_custom_words_drive_cog_trigger_and_help(self):
+        self.cog.config.words = ("quote", "q")
+        self.assertTrue(self.cog.matches_trigger("QUOTE"))
+        self.assertFalse(self.cog.matches_trigger("miq"))
+        message = await self.run_with("quote help")
+        self.assertIn("quote台帳", message.replies[0]["content"])
+        self.assertEqual((await self.run_with("miq")).replies, [])
+        self.cog.config.words = ()
+        self.assertFalse(self.cog.matches_trigger("miq"))
+        self.assertEqual((await self.run_with("miq")).replies, [])
 
     async def test_catalog_needs_no_reply(self):
         pages = [("miq-layouts-1.png", b"one"), ("miq-layouts-2.png", b"two")]

@@ -2,7 +2,20 @@
   "type": "object",
   "properties": {
     "data_file": {"type": "string", "default": "sounds.json", "minLength": 1},
-    "sounds_dir": {"type": "string", "default": "sounds", "minLength": 1}
+    "sounds_dir": {"type": "string", "default": "sounds", "minLength": 1},
+    "audio_processing": {
+      "type": "object",
+      "properties": {
+        "threshold_db": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?(dB)?$", "default": "-42dB"},
+        "keep_start_seconds": {"type": "number", "minimum": 0, "default": 0.08},
+        "keep_end_seconds": {"type": "number", "minimum": 0, "default": 0.12},
+        "loudness_i": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$", "default": "-16"},
+        "loudness_tp": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$", "default": "-1.5"},
+        "loudness_lra": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$", "default": "11"}
+      },
+      "additionalProperties": false,
+      "default": {}
+    }
   },
   "additionalProperties": false
 }

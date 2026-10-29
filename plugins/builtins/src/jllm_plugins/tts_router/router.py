@@ -183,6 +183,8 @@ class TTSRouter(TTSBackend):
         lifecycle=None,
         providers: dict[str, TTSBackend] | None = None,
         disabled_voices_path: str = "",
+        id_aliases: dict[str, str] | None = None,
+        require_existing_state: bool = False,
     ):
         if not specs:
             raise TTSBackendError("TTSバックエンドが1つも設定されていません。")
@@ -212,8 +214,60 @@ class TTSRouter(TTSBackend):
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
-        state = self._load_state()
         known = {spec.id for spec in self.specs}
+        state = self._load_state()
+        if require_existing_state and not state:
+            raise TTSBackendError(
+                "空でない既存のTTS状態が必要です。state_file と保存先を確認してください。"
+            )
+        aliases = id_aliases or {}
+
+        def resolve_id(value):
+            if not isinstance(value, str):
+                raise TTSBackendError("TTS状態のバックエンドIDが不正です。")
+            value = aliases.get(value, value)
+            if value not in known:
+                raise TTSBackendError(
+                    f"TTS状態のID {value} に対応するバックエンドがありません。"
+                    "backend_ids の設定を確認してください。"
+                )
+            return value
+
+        for key in ("preferred", "active"):
+            if key in state and (require_existing_state or state[key] is not None):
+                state[key] = resolve_id(state[key])
+        if (
+            require_existing_state
+            and "failover" in state
+            and not isinstance(state["failover"], bool)
+        ):
+            raise TTSBackendError("TTS状態の failover が不正です。")
+        if "streaming" in state:
+            if not isinstance(state["streaming"], dict):
+                raise TTSBackendError("TTS状態の streaming が不正です。")
+            normalized = {}
+            for key, value in state["streaming"].items():
+                if require_existing_state and not isinstance(value, bool):
+                    raise TTSBackendError("TTS状態の streaming が不正です。")
+                ident = resolve_id(key)
+                if ident in normalized and normalized[ident] != value:
+                    raise TTSBackendError(f"TTS状態の配信方式が競合しています: {ident}")
+                normalized[ident] = value
+            state["streaming"] = normalized
+        if require_existing_state and "unhealthy" in state:
+            if not isinstance(state["unhealthy"], dict):
+                raise TTSBackendError("TTS状態の unhealthy が不正です。")
+            for key, value in state["unhealthy"].items():
+                resolve_id(key)
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise TTSBackendError("TTS状態の unhealthy が不正です。")
+        if require_existing_state and not (
+            "preferred" in state or "active" in state or "failover" in state
+            or bool(state.get("streaming"))
+        ):
+            raise TTSBackendError(
+                "TTS状態に有効な設定がありません。state_file を確認してください。"
+            )
         self.preferred = (
             state.get("preferred") if state.get("preferred") in known else self.specs[0].id
         )
@@ -297,15 +351,21 @@ class TTSRouter(TTSBackend):
     # ------------------------------------------------------------------ 切替
 
     def _load_state(self) -> dict:
-        if self.state_path is None or not self.state_path.is_file():
+        if self.state_path is None:
             return {}
 
         try:
             data = json.loads(self.state_path.read_text(encoding="utf-8"))
-        except OSError, ValueError:
+        except FileNotFoundError:
             return {}
+        except (OSError, ValueError) as exc:
+            raise TTSBackendError(
+                "TTS状態を読み込めません。保存済みの状態を確認してください。"
+            ) from exc
 
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise TTSBackendError("TTS状態の形式が不正です。")
+        return data
 
     def _save_state(self):
         if self.state_path is None:
