@@ -54,7 +54,7 @@
 | `TTS_SPEECHCPP_URL`、`_VOICES_DIR`、`_VOICE`、`SPEECHCPP_MODEL`、`SPEECHCPP_TIMEOUT` | `provider.tts.speechcpp` の `url`、`voices_dir`、`voice`、`model`、`timeout` | |
 | `TTS_OPENAI_URL`、`_VOICE`、`_VOICES`、`_VOICES_PATH`、`_HEALTH_PATH`、`_MODEL`、`_SPEED_MODE`、`_DEFAULT_SPEED`、`_IGNORE_SPEED`、`_SEED`、`_SILENCE_RETRIES`、`_SILENCE_RMS_DBFS`、`_TIMEOUT`、`_STREAM` | `provider.tts.openai` の `url`、`voice`、`voices`、`voices_path`、`health_path`、`model`、`speed_mode`、`default_speed`、`ignore_speaker_speed`、`seed`、`silence_retries`、`silence_rms_dbfs`、`timeout`、`streaming` | |
 | `TTS_IRODORI_URL`、`_VOICE`、`_VOICE_ORDER`、`IRODORI_CAPTION`、`IRODORI_MODEL`、`IRODORI_LORA_MAP_FILE`、`IRODORI_VOICES_CACHE`、`VOICE_DISABLED_PATH`、`TTS_IRODORI_STREAM`、`_CHUNK_MIN_CHARS`、`_FIRST_CHUNK_MIN_CHARS` | `provider.tts.irodori` の `url`、`voice`、`voice_order`、`caption`、`model`、`lora_map_file`、`voices_cache`、`disabled_voices_path`、`streaming`、`chunk_min_chars`、`first_chunk_min_chars` | API キーは `api_key_env` に**環境変数名**を書く。`data_dir` は storage と独立。 |
-| `TTS_CONTROL_*`、`TTS_CONTROL_Z170_*` | 変更なし（環境変数として渡す） | 3点（host/key/known_hosts）が揃わないと lifecycle は動かない。lifecycle の対象は旧 ID なので `backend_ids` と整合させる。 |
+| `TTS_CONTROL_*`、`TTS_CONTROL_Z170_*` | 変更なし（環境変数として渡す） | 3点（host/key/known_hosts）が揃わないと lifecycle は動かない。どのバックエンドをどのホストの unit にするかは `tts.lifecycle.config.targets` に書く（`local_only` と `unmanaged_hosts` も同様）。lifecycle の対象は旧 ID なので `backend_ids` と整合させる。 |
 
 旧 backend ごとの任意 `env`・未知キーは新 schema が受け付けません（`additionalProperties: false`）。必要な項目は provider の対応キーへ明示的に移してください。
 
