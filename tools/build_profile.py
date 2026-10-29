@@ -42,10 +42,19 @@ def number(env, key, default):
 
 
 def integer(env, key, default):
-    try:
-        return int(float(text(env, key) or default))
-    except ValueError:
+    raw = text(env, key)
+
+    if not raw:
         return default
+
+    try:
+        # Discord の ID は 18 桁ある。float を経由すると末尾が変わる。
+        return int(raw)
+    except ValueError:
+        try:
+            return int(float(raw))
+        except ValueError:
+            return default
 
 
 def flag(env, key, default=False):

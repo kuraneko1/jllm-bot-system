@@ -102,6 +102,16 @@ class BuildProfileTests(unittest.TestCase):
             self.assertNotIn(secret, written)
         self.assertIn("DISCORD_TOKEN", written)
 
+    def test_eighteen_digit_ids_are_not_rounded(self):
+        env = environment() | {"OWNER_ID": "612785552315645953"}
+        profile, _ = build_profile.build(env, backends(), Path("/srv/data"))
+        self.assertEqual(profile["plugins"]["feature.reader"]["config"]["owner_id"],
+                         612785552315645953)
+        self.assertEqual(profile["plugins"]["dictionary.media"]["config"]["owner_id"],
+                         612785552315645953)
+        self.assertEqual(profile["plugins"]["feature.reader"]["config"]["allowed_channel_ids"],
+                         [10, 11])
+
     def test_unknown_backend_kind_is_reported_not_silently_kept(self):
         broken = {"backends": [{"id": "x", "kind": "unknown", "url": "http://127.0.0.1:1"}]}
         profile, summary = build_profile.build(environment(), broken, Path("/srv/data"))
