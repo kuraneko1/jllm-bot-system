@@ -322,19 +322,20 @@ def build_filter(effects, ir_path: str | None = None) -> str | None:
 
     枝分かれする効果（ec の畳み込み、kk のシマー）はフィルタグラフを返す。
     その場合は最後の段に置き、他の効果を掛けた結果を入力として渡す。
-    テンプレート中の ``{PRE}`` に先行効果、``{LIMIT}`` にリミッターが入る。
+    テンプレート中の ``{PRE}`` に先行効果、``{LIMIT}`` に末尾の効果とリミッターが入る。
     """
-    parts: list[str] = []
+    parts: list[tuple[bool, str]] = []  # (畳み込みの後ろへ回すか, フィルタ)
     limiter = False
     graph: str | None = None
 
     for code, intensity in effects or ():
-        entry = EFFECTS.get(str(code).lower())
+        lowered = str(code).lower()
+        entry = EFFECTS.get(lowered)
         if entry is None:
             continue
         _, builder, _ = entry
         try:
-            if str(code).lower() == "ec":
+            if lowered == "ec":
                 piece, wants_limiter = builder(clamp_intensity(intensity), ir_path=ir_path)
             else:
                 piece, wants_limiter = builder(clamp_intensity(intensity))
@@ -344,18 +345,31 @@ def build_filter(effects, ir_path: str | None = None) -> str | None:
         if isinstance(piece, tuple):
             graph = piece[1]
             continue
-        parts.append(piece)
+        parts.append((lowered == "vi", piece))
 
     if graph is not None:
-        pre = "," + ",".join(parts) if parts else ""
-        limit = "," + _LIMITER if limiter else ""
+        # vi は畳み込み（afir）の後ろ・リミッターの直前に回す。afir の直前に
+        # vibrato を置くと、ffmpeg 6.1.1 は afir の内部バッファを初期化しない
+        # まま出力し、無音を入力しても先頭 0.85 秒前後が -inf になる（実測。
+        # IR が長いほど範囲が伸びる）。その -inf はアミックス後のリミッターで
+        # 0.95 に張り付いたまま残り、サンプルの 6 割前後が天井に張り付く＝激しい
+        # 音割れになる。vibrato は入力の線形補間なので、後ろに置いてもピークは
+        # 増えない（実測 0.35 → 0.247）。リミッターの手前に置くのは、vibrato
+        # 自身が先頭 5ms に出す非有限サンプルをリミッターに無害化させるため。
+        late = "afir=" in graph
+        pre_parts = [piece for is_vibrato, piece in parts if not (late and is_vibrato)]
+        tail_parts = [piece for is_vibrato, piece in parts if late and is_vibrato]
+        pre = "," + ",".join(pre_parts) if pre_parts else ""
+        last_parts = tail_parts + ([_LIMITER] if limiter else [])
+        limit = "," + ",".join(last_parts) if last_parts else ""
         return graph.replace("{PRE}", pre).replace("{LIMIT}", limit)
 
     if not parts:
         return None
-    if limiter and not any("alimiter" in part for part in parts):
-        parts.append(_LIMITER)
-    return ",".join(parts)
+    plain = [piece for _, piece in parts]
+    if limiter and not any("alimiter" in part for part in plain):
+        plain.append(_LIMITER)
+    return ",".join(plain)
 
 
 def describe_effects(effects) -> str:
