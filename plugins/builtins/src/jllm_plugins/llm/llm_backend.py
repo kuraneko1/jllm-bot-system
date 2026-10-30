@@ -123,12 +123,12 @@ def read_mode_label(mode: str) -> str:
     """読み上げモードの表示名。"""
 
     if mode == "full":
-        return "TTS+辞書wav（Botの返答もユーザーと同じ）"
+        return "Botの返答を辞書wav＋TTSで読む"
     if mode == "wav":
-        return "辞書wavのみ（TTSなし）"
+        return "Botの返答を辞書wavだけで読む"
     if mode == "none":
-        return "読み上げなし"
-    return "TTSで読み上げ"
+        return "Botの返答を読まない"
+    return "Botの返答をTTSで読む"
 
 
 def default_read_mode(backend: str | None = None) -> str:

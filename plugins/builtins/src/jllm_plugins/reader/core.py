@@ -368,21 +368,25 @@ class ReaderCog(commands.Cog):
         return self.voice_entries
 
     def _read_mode(self):
-        """読み上げモード（``tts`` / ``full`` / ``wav`` / ``none``）。
+        """ユーザー投稿の読み上げモード（``tts`` / ``wav`` / ``none``）。
 
-        設定で ``full`` / ``wav`` / ``none`` を明示していればそれを優先し、
-        それ以外は LLM 側の全体設定（``/llm read``）に従う。``full`` は Bot 自身の
-        返答もユーザー投稿と同じく「辞書wav＋TTS」で読む。
+        ``/llm read`` のモードは **Bot 自身の返答だけ**に効く（``_bot_read_mode``）。
+        ユーザー投稿の読み方はモデルを切り替えても変わらない。ここは reader の
+        設定が ``wav`` / ``none`` を明示したときだけ従う。
         """
 
-        if self.config.read_mode in ("full", "wav", "none"):
+        if self.config.read_mode in ("wav", "none"):
             return self.config.read_mode
+        return "tts"
+
+    def _bot_read_mode(self):
+        """Bot 自身の返答を読むモード（``/llm read`` の設定）。"""
+
         try:
             mode = llm_backend.active_read_mode()
         except Exception:
-            return self.config.read_mode
-        valid = ("tts", "full", "wav", "none")
-        return mode if mode in valid else self.config.read_mode
+            return "tts"
+        return mode if mode in ("tts", "full", "wav", "none") else "tts"
 
     def _save_voice_history(self):
         if "settings" in self.__dict__:
@@ -471,10 +475,10 @@ class ReaderCog(commands.Cog):
         return value
 
     async def tts_length_for(self, speaker) -> int:
-        """話者ごとの読み上げ文字数（先頭何文字まで読むか）。
+        """Bot の返答を読む文字数（先頭何文字まで読むか）。
 
-        速度・音量と同じく ``_voice_name`` で名前を解決する。未設定なら
-        ``config.max_message_length``。Bot の声も 1 つの話者として扱う。
+        保存は Bot の声の名前ごと。未設定なら ``config.max_message_length``。
+        ユーザー投稿の文字数はこれに影響されない。
         """
 
         name = await self._voice_name(speaker)
@@ -513,14 +517,6 @@ class ReaderCog(commands.Cog):
         embed.add_field(
             name="声（話者）",
             value=voice_name or f"サーバー既定（{default_name}）",
-            inline=False,
-        )
-        embed.add_field(
-            name="読み上げ文字数",
-            value=(
-                f"先頭 {self.length_for_name(voice_name or default_name)} 文字まで"
-                "（オーナーが /readlength で変更できます）"
-            ),
             inline=False,
         )
         if player is None:
@@ -629,19 +625,16 @@ class ReaderCog(commands.Cog):
 
     @app_commands.command(
         name="readlength",
-        description="話者ごとに「先頭何文字まで読むか」を設定します（オーナーのみ）",
+        description="Bot自身の返答を読む文字数を設定します（オーナーのみ）",
     )
     @app_commands.describe(
-        speaker="話者（声）の名前。省略するとBotの声",
         length="先頭何文字まで読み上げるか（1〜1900）",
-        clear="この話者の設定を消して既定（max_message_length）に戻す",
+        clear="設定を消して既定（max_message_length）に戻す",
     )
-    @app_commands.autocomplete(speaker=_speaker_name_choices)
     @app_commands.guild_only()
     async def readlength(
         self,
         interaction: discord.Interaction,
-        speaker: str | None = None,
         length: int | None = None,
         clear: bool = False,
     ):
@@ -651,38 +644,31 @@ class ReaderCog(commands.Cog):
             )
             return
         guild = interaction.guild
-        name = (speaker or "").strip()
-        if not name:
-            # 話者名を省いたときは Bot の声（/botvoice の設定、無ければサーバー既定）。
-            player = self.players.get(guild.id) if guild is not None else None
-            name = self.bot_voice_name() or str(
-                await self._voice_name(self.bot_speaker(player))
-            )
+        player = self.players.get(guild.id) if guild is not None else None
+        # 文字数は Bot の声に紐づけて保存する（ユーザー投稿には効かない）。
+        name = self.bot_voice_name() or str(await self._voice_name(self.bot_speaker(player)))
+        default = self.config.max_message_length
         if clear:
             removed = self.voice_lengths.remove(name)
-            default = self.config.max_message_length
             message = (
-                f"{name} の設定を消して既定（先頭 {default} 文字）に戻しました。"
+                f"Bot（{name}）の設定を消して既定（先頭 {default} 文字）に戻しました。"
                 if removed
-                else f"{name} には文字数設定がありません（既定は先頭 {default} 文字）。"
+                else f"Bot（{name}）には設定がありません（既定は先頭 {default} 文字）。"
             )
-            await interaction.response.send_message(message, ephemeral=True)
-            return
-        if length is None:
-            await interaction.response.send_message(
-                f"{name} は先頭 {self.length_for_name(name)} 文字まで読み上げます。",
-                ephemeral=True,
+        elif length is None:
+            message = f"Bot（{name}）は先頭 {self.length_for_name(name)} 文字まで読み上げます。"
+        else:
+            try:
+                value = check_length(length)
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+            self.voice_lengths.set(name, value)
+            message = (
+                f"Bot（{name}）は先頭 {value} 文字まで読み上げます。"
+                "ユーザー投稿の文字数は変わりません。"
             )
-            return
-        try:
-            value = check_length(length)
-        except ValueError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
-            return
-        self.voice_lengths.set(name, value)
-        await interaction.response.send_message(
-            f"{name} は先頭 {value} 文字まで読み上げます。", ephemeral=True
-        )
+        await interaction.response.send_message(message, ephemeral=True)
 
     @app_commands.command(
         name="botvoice",
@@ -907,8 +893,8 @@ class ReaderCog(commands.Cog):
         投稿を監視して拾うのではなく、この入口だけを使う。
         """
 
-        mode = self._read_mode()
-        if mode not in ("tts", "full"):
+        mode = self._bot_read_mode()
+        if mode == "none":
             return
         guild = getattr(sent, "guild", None)
         channel = getattr(sent, "channel", None)
@@ -935,8 +921,21 @@ class ReaderCog(commands.Cog):
         bot_id = getattr(getattr(self.bot, "user", None), "id", 0)
         post_id = str(getattr(sent, "id", "") or "")
         author_key = self._user_key(guild.id, bot_id)
-        if mode != "full":
-            # tts では従来どおり本文をまとめて読む（話者・速度は既定）。
+        if mode == "wav":
+            # 辞書wavだけ鳴らす（TTSなし）。
+            if self.toggles["wav"]:
+                for segment in self.dictionary.split(text):
+                    if segment.kind == "sound":
+                        player.enqueue_sound(
+                            segment.value,
+                            self.config.default_speed,
+                            self.dictionary.volume_of_file(Path(segment.value).name),
+                            post_id,
+                            author_key,
+                        )
+            return
+        if mode == "tts":
+            # TTS で本文をまとめて読む（話者・速度は既定）。
             player.enqueue(
                 text,
                 speaker,
@@ -1058,14 +1057,11 @@ class ReaderCog(commands.Cog):
         read_text = strip_call_suffix(
             tts_message_text(message), self.config.talk_call_suffix
         )
-        # 文字数は「その投稿の話者」の設定を使う（未設定なら config の既定）。
         speaker = self.effective_voice_for(message.guild.id, message.author.id)
         speaker_key = speaker if speaker is not None else player.speaker_id
-        max_length = (
-            await self.tts_length_for(speaker_key)
-            if mode in ("tts", "full")
-            else self.config.max_message_length
-        )
+        # ユーザー投稿は従来どおり max_message_length で切る。
+        # 文字数の設定（/readlength）は Bot の返答だけに効く。
+        max_length = self.config.max_message_length
         command = parse_commands(read_text)
         post_id = str(message.id)
         author_key = self._user_key(message.guild.id, message.author.id)
@@ -1171,7 +1167,7 @@ class ReaderCog(commands.Cog):
             or after_id != player.voice_client.channel.id
             or player.closed
             or not player.voice_client.is_connected()
-            or self._read_mode() not in ("tts", "full")
+            or self._bot_read_mode() not in ("tts", "full")
         ):
             return
         now = time.time()
@@ -1325,7 +1321,7 @@ class ReaderCog(commands.Cog):
             "- /mytalk — 自分の声・ミュートを選択し、**✅ 設定する**で確定",
             "- /forcevoice — メンバーの声を強制変更（オーナーのみ。本人設定より優先）",
             "- /botvoice — Bot自身の返答を読む声を設定（オーナーのみ）",
-            "- /readlength — 話者ごとの「先頭何文字まで読むか」（オーナーのみ）",
+            "- /readlength — Botの返答を読む文字数（オーナーのみ。ユーザー投稿は変わらない）",
             "- /emoji enabled: — 👅💋の読み上げを切り替え（既定は無効）",
             "- 投稿の先頭に ;・: — **その投稿だけ**読み上げない",
             "- s だけ送信 — 再生中の読み上げを停止",

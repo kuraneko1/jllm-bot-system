@@ -83,13 +83,15 @@ class BackendStateTests(unittest.TestCase):
                 self.assertEqual(llm_backend.active_read_mode(), mode)
 
     def test_read_mode_labels_cover_four_modes(self):
-        self.assertEqual(llm_backend.read_mode_label("tts"), "TTSで読み上げ")
+        self.assertEqual(llm_backend.read_mode_label("tts"), "Botの返答をTTSで読む")
         self.assertEqual(
             llm_backend.read_mode_label("full"),
-            "TTS+辞書wav（Botの返答もユーザーと同じ）",
+            "Botの返答を辞書wav＋TTSで読む",
         )
-        self.assertEqual(llm_backend.read_mode_label("wav"), "辞書wavのみ（TTSなし）")
-        self.assertEqual(llm_backend.read_mode_label("none"), "読み上げなし")
+        self.assertEqual(
+            llm_backend.read_mode_label("wav"), "Botの返答を辞書wavだけで読む"
+        )
+        self.assertEqual(llm_backend.read_mode_label("none"), "Botの返答を読まない")
 
     def test_read_mode_can_be_overridden_without_touching_the_backend(self):
         llm_backend.set_selection("atmos", "tts")

@@ -852,14 +852,19 @@ class TranslationCog(commands.Cog):
         ]
 
         if snapshot["read_mode"] == "wav":
-            lines.append("辞書に登録した wav だけ鳴らし、TTS は使いません（入室案内もしません）。")
+            lines.append(
+                "Botの返答は辞書wavだけ鳴らします（TTSなし）。"
+                "ユーザー投稿の読み上げは変わりません。"
+            )
         elif snapshot["read_mode"] == "full":
             lines.append(
-                "ユーザー投稿もBotの返答も、辞書wav＋TTSで読みます"
-                "（Botの返答もユーザーと同じ読み方）。"
+                "Botの返答は辞書wav＋TTSで読みます"
+                "（ユーザー投稿の読み上げは今のままです）。"
             )
         elif snapshot["read_mode"] == "none":
-            lines.append("読み上げを止めています。/join していても何も鳴らしません。")
+            lines.append(
+                "Botの返答は読み上げません（ユーザー投稿の読み上げは変わりません）。"
+            )
 
         if health is True:
             lines.append("疎通: OK")
@@ -934,12 +939,10 @@ class TranslationCog(commands.Cog):
             app_commands.Choice(name="OpenAI 互換", value="openai"),
         ],
         read_mode=[
-            app_commands.Choice(name="TTSで読み上げ", value="tts"),
-            app_commands.Choice(
-                name="TTS+辞書wav（Botの返答もユーザーと同じ）", value="full"
-            ),
-            app_commands.Choice(name="辞書wavのみ（TTSしない）", value="wav"),
-            app_commands.Choice(name="読み上げなし", value="none"),
+            app_commands.Choice(name="Botの返答をTTSで読む", value="tts"),
+            app_commands.Choice(name="Botの返答を辞書wav＋TTSで読む", value="full"),
+            app_commands.Choice(name="Botの返答を辞書wavだけで読む", value="wav"),
+            app_commands.Choice(name="Botの返答を読まない", value="none"),
         ],
     )
     async def llm_switch(
@@ -1027,16 +1030,14 @@ class TranslationCog(commands.Cog):
         description="読み上げモードだけを変えます（モデルはそのまま）",
     )
     @app_commands.describe(
-        mode="TTSで読み上げる / Botの返答も辞書wav+TTS / 辞書wavだけ鳴らす / 何も鳴らさない"
+        mode="Botの返答の読み方（ユーザー投稿の読み上げは変わりません）"
     )
     @app_commands.choices(
         mode=[
-            app_commands.Choice(name="TTSで読み上げ", value="tts"),
-            app_commands.Choice(
-                name="TTS+辞書wav（Botの返答もユーザーと同じ）", value="full"
-            ),
-            app_commands.Choice(name="辞書wavのみ（TTSしない）", value="wav"),
-            app_commands.Choice(name="読み上げなし", value="none"),
+            app_commands.Choice(name="Botの返答をTTSで読む", value="tts"),
+            app_commands.Choice(name="Botの返答を辞書wav＋TTSで読む", value="full"),
+            app_commands.Choice(name="Botの返答を辞書wavだけで読む", value="wav"),
+            app_commands.Choice(name="Botの返答を読まない", value="none"),
         ]
     )
     async def llm_read(

@@ -131,29 +131,31 @@ class FullModeOwnResponseTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_label_and_mode_are_registered(self):
         self.assertEqual(
             llm_backend.read_mode_label("full"),
-            "TTS+辞書wav（Botの返答もユーザーと同じ）",
+            "Botの返答を辞書wav＋TTSで読む",
         )
         self.assertIn("full", llm_backend.READ_MODES)
-        self.assertEqual(llm_backend.read_mode_label("tts"), "TTSで読み上げ")
-        self.assertEqual(llm_backend.read_mode_label("wav"), "辞書wavのみ（TTSなし）")
-        self.assertEqual(llm_backend.read_mode_label("none"), "読み上げなし")
+        self.assertEqual(llm_backend.read_mode_label("tts"), "Botの返答をTTSで読む")
+        self.assertEqual(
+            llm_backend.read_mode_label("wav"), "Botの返答を辞書wavだけで読む"
+        )
+        self.assertEqual(llm_backend.read_mode_label("none"), "Botの返答を読まない")
 
-    async def test_reader_config_full_is_honored_over_the_llm_setting(self):
+    async def test_reader_config_does_not_override_the_bot_mode(self):
+        """Botの返答は /llm read の設定だけで決まる（reader 設定は効かない）。"""
+
         cog, player = make_cog()
         cog.config.read_mode = "full"
         with mode("wav"):
             await cog.speak_own_response(sent(), "marと本文")
         player.enqueue_sound.assert_called_once()
-        player.enqueue.assert_called_once()
+        player.enqueue.assert_not_called()
 
-    async def test_wav_and_none_modes_stay_quiet(self):
-        for mode_name in ("wav", "none"):
-            with self.subTest(mode=mode_name):
-                cog, player = make_cog()
-                with mode(mode_name):
-                    await cog.speak_own_response(sent(), "marと本文")
-                player.enqueue_sound.assert_not_called()
-                player.enqueue.assert_not_called()
+    async def test_none_mode_stays_quiet(self):
+        cog, player = make_cog()
+        with mode("none"):
+            await cog.speak_own_response(sent(), "marと本文")
+        player.enqueue_sound.assert_not_called()
+        player.enqueue.assert_not_called()
 
 
 class FullModeUserPostTests(unittest.IsolatedAsyncioTestCase):

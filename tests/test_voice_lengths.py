@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from jllm_plugins.reader.core import ReaderCog
-from jllm_plugins.reader.panels import ForceVoiceView
 from jllm_plugins.storage.plugin import LocalStorage
 from jllm_plugins.voice_settings.lengths import VoiceLengths, check_length
 from jllm_plugins.voice_settings.settings import VoiceSettings
@@ -162,16 +161,18 @@ class ReaderVoiceLengthTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(await cog.tts_length_for(1), 200)
 
-    async def test_post_uses_the_authors_voice_length(self):
+    async def test_posts_ignore_voice_lengths(self):
+        """文字数の設定は Bot の返答だけに効く（ユーザー投稿は変わらない）。"""
+
         lengths = VoiceLengths()
         lengths.set(BOT_VOICE, 3)
         cog = make_cog(lengths)
         with patch("jllm_plugins.llm.llm_backend.active_read_mode", return_value="tts"):
             await send(cog, "あいうえおかきくけこ")
         cog.players[1].enqueue.assert_called_once()
-        self.assertEqual(cog.players[1].enqueue.call_args.args[0], "あいう、以下略")
+        self.assertEqual(cog.players[1].enqueue.call_args.args[0], "あいうえおかきくけこ")
 
-    async def test_post_uses_the_forced_voice_length(self):
+    async def test_forced_voice_does_not_change_the_post_length(self):
         lengths = VoiceLengths()
         lengths.set(BOT_VOICE, 3)
         lengths.set("Clone Second", 6)
@@ -180,7 +181,7 @@ class ReaderVoiceLengthTests(unittest.IsolatedAsyncioTestCase):
         with patch("jllm_plugins.llm.llm_backend.active_read_mode", return_value="tts"):
             await send(cog, "あいうえおかきくけこ")
         self.assertEqual(
-            cog.players[1].enqueue.call_args.args[0], "あいうえおか、以下略"
+            cog.players[1].enqueue.call_args.args[0], "あいうえおかきくけこ"
         )
 
     async def test_unset_post_uses_the_config_default(self):
@@ -222,36 +223,26 @@ class ReadLengthCommandTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_owner_and_unset_owner_are_denied(self):
         caller = interaction(99)
-        await ReaderCog.readlength.callback(
-            self.cog, caller, speaker=BOT_VOICE, length=10
-        )
+        await ReaderCog.readlength.callback(self.cog, caller, length=10)
         caller.response.send_message.assert_awaited_once()
         self.assertIsNone(self.cog.voice_lengths.get(BOT_VOICE))
         caller.response.send_message.reset_mock()
         self.cog.config.owner_id = 0
         owner = interaction(42)
-        await ReaderCog.readlength.callback(
-            self.cog, owner, speaker=BOT_VOICE, length=10
-        )
+        await ReaderCog.readlength.callback(self.cog, owner, length=10)
         owner.response.send_message.assert_awaited_once()
         self.assertIsNone(self.cog.voice_lengths.get(BOT_VOICE))
 
     async def test_sets_shows_and_clears(self):
         caller = interaction(42)
-        await ReaderCog.readlength.callback(
-            self.cog, caller, speaker=BOT_VOICE, length=50
-        )
+        await ReaderCog.readlength.callback(self.cog, caller, length=50)
         self.assertEqual(self.cog.voice_lengths.get(BOT_VOICE), 50)
         self.assertIn("先頭 50 文字", caller.response.send_message.call_args.args[0])
         caller.response.send_message.reset_mock()
-        await ReaderCog.readlength.callback(
-            self.cog, caller, speaker=BOT_VOICE, length=None
-        )
+        await ReaderCog.readlength.callback(self.cog, caller, length=None)
         self.assertIn("先頭 50 文字", caller.response.send_message.call_args.args[0])
         caller.response.send_message.reset_mock()
-        await ReaderCog.readlength.callback(
-            self.cog, caller, speaker=BOT_VOICE, clear=True
-        )
+        await ReaderCog.readlength.callback(self.cog, caller, clear=True)
         self.assertIsNone(self.cog.voice_lengths.get(BOT_VOICE))
         self.assertIn("先頭 200 文字", caller.response.send_message.call_args.args[0])
 
@@ -259,55 +250,23 @@ class ReadLengthCommandTests(unittest.IsolatedAsyncioTestCase):
         for bad in (0, 1901, -1):
             with self.subTest(bad=bad):
                 caller = interaction(42)
-                await ReaderCog.readlength.callback(
-                    self.cog, caller, speaker=BOT_VOICE, length=bad
-                )
+                await ReaderCog.readlength.callback(self.cog, caller, length=bad)
                 caller.response.send_message.assert_awaited_once()
                 self.assertIsNone(self.cog.voice_lengths.get(BOT_VOICE))
                 self.assertIn("1〜1900", caller.response.send_message.call_args.args[0])
 
-    async def test_omitted_speaker_targets_the_bot_voice(self):
+    async def test_targets_the_bot_voice(self):
         caller = interaction(42)
         await ReaderCog.readlength.callback(self.cog, caller, length=30)
         self.assertEqual(self.cog.voice_lengths.get(BOT_VOICE), 30)
+        self.assertIn(
+            "ユーザー投稿の文字数は変わりません",
+            caller.response.send_message.call_args.args[0],
+        )
 
     async def test_autocomplete_lists_speaker_names(self):
         choices = await self.cog._speaker_name_choices(interaction(42), "こし")
         self.assertEqual([choice.value for choice in choices], [BOT_VOICE])
-
-
-class PanelLengthTests(unittest.TestCase):
-    def test_forcevoice_embed_shows_the_current_reading_length(self):
-        lengths = VoiceLengths()
-        lengths.set(BOT_VOICE, 123)
-        cog = make_cog(lengths)
-        cog.forced_voices = {"1:7": BOT_VOICE}
-        view = ForceVoiceView(
-            cog, guild_id=1, owner_id=42, speakers=[(1, BOT_VOICE)]
-        )
-        field = next(f for f in view.embed().fields if f.name == "現在の強制設定")
-        self.assertIn("先頭 123 文字", field.value)
-
-    def test_forcevoice_pending_voice_shows_its_length(self):
-        lengths = VoiceLengths()
-        lengths.set(BOT_VOICE, 123)
-        cog = make_cog(lengths)
-        view = ForceVoiceView(
-            cog, guild_id=1, owner_id=42, speakers=[(1, BOT_VOICE)]
-        )
-        view.pending_user = 7
-        view.pending_voice = "1"
-        field = next(f for f in view.embed().fields if f.name == "選択中（未確定）")
-        self.assertIn("先頭 123 文字", field.value)
-
-    def test_mytalk_embed_shows_the_current_reading_length(self):
-        lengths = VoiceLengths()
-        lengths.set(BOT_VOICE, 88)
-        cog = make_cog(lengths)
-        cog.players = {}
-        embed = cog._mytalk_embed(1, 2, [(1, BOT_VOICE)])
-        field = next(f for f in embed.fields if f.name == "読み上げ文字数")
-        self.assertIn("88", field.value)
 
 
 if __name__ == "__main__":

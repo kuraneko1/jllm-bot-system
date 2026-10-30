@@ -287,13 +287,18 @@ class ReaderCoreTests(unittest.IsolatedAsyncioTestCase):
         await self.cog.speak_own_response(self.sent(channel_id=999), "よその返信")
         self.player.enqueue.assert_not_called()
 
-    async def test_own_response_is_not_read_in_wav_or_none_mode(self):
-        for mode in ("wav", "none"):
-            with self.subTest(mode=mode):
-                self.cog.config.read_mode = mode
-                await self.cog.speak_own_response(self.sent(), "応答")
-                self.player.enqueue.assert_not_called()
-        self.cog.config.read_mode = "tts"
+    async def test_own_response_is_not_read_in_none_mode(self):
+        """Botの返答の読み方は /llm read の設定で決まる（reader 設定ではない）。"""
+
+        with patch("jllm_plugins.llm.llm_backend.active_read_mode", return_value="none"):
+            await self.cog.speak_own_response(self.sent(), "応答")
+        self.player.enqueue.assert_not_called()
+
+    async def test_own_response_wav_mode_plays_dictionary_sounds_only(self):
+        with patch("jllm_plugins.llm.llm_backend.active_read_mode", return_value="wav"):
+            await self.cog.speak_own_response(self.sent(), "mar の話")
+        self.player.enqueue_sound.assert_called_once()
+        self.player.enqueue.assert_not_called()
 
     async def test_bot_posts_are_not_read_by_watching_messages(self):
         # 読み上げは会話の応答を投稿した側が明示的に呼ぶ。投稿を監視して拾わない。
