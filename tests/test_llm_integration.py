@@ -105,7 +105,8 @@ class LLMIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(state.active_read_mode(), "tts")
                 await client.switch("atmos")
                 self.assertEqual(client.backend, "atmos")
-                self.assertEqual(state.active_read_mode(), "wav")
+                # バックエンドを変えても読み上げモードは変わらない。
+                self.assertEqual(state.active_read_mode(), "tts")
                 self.assertEqual(state.backend_for(), "atmos")
                 state.set_channel(123, "sarashina")
                 self.assertEqual(state.backend_for(123), "sarashina")

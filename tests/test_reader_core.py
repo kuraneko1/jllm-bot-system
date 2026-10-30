@@ -38,7 +38,7 @@ class FakePlayer:
         self.close = AsyncMock(side_effect=lambda: setattr(self, "closed", True))
 
 
-def message(content="こんにちは", author_id=42, channel_id=123):
+def message(content="こんにちは", author_id=42, channel_id=123, bot=False, reference=None):
     return SimpleNamespace(
         id=10,
         content=content,
@@ -51,9 +51,10 @@ def message(content="こんにちは", author_id=42, channel_id=123):
             emojis=[],
         ),
         channel=SimpleNamespace(id=channel_id),
-        author=SimpleNamespace(id=author_id, bot=False, display_name="user", name="user"),
+        author=SimpleNamespace(id=author_id, bot=bot, display_name="user", name="user"),
         mentions=[],
         role_mentions=[],
+        reference=reference,
         add_reaction=AsyncMock(),
     )
 
@@ -227,6 +228,78 @@ class ReaderCoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_wav_only_mode_does_not_synthesize_text(self):
         self.cog.config.read_mode = "wav"
         await self.cog.on_message(message())
+        self.player.enqueue.assert_not_called()
+
+    async def test_joined_channel_is_read_even_outside_the_allowlist(self):
+        # /join したチャンネルが読み上げ先。許可リストは範囲外の判定にだけ効く。
+        self.cog.config.allowed_channel_ids = frozenset({999})
+        await self.cog.on_message(message("こんにちは", channel_id=123))
+        self.player.enqueue.assert_called_once()
+        self.player.enqueue.reset_mock()
+        await self.cog.on_message(message("よその雑談", channel_id=456))
+        self.player.enqueue.assert_not_called()
+
+    async def test_none_mode_keeps_text_and_wav_quiet(self):
+        self.cog.config.read_mode = "none"
+        await self.cog.on_message(message())
+        await self.cog.on_message(message("mar f2"))
+        self.player.enqueue.assert_not_called()
+        self.player.enqueue_sound.assert_not_called()
+
+    async def test_trailing_call_suffix_is_not_read_aloud(self):
+        await self.cog.on_message(message("こんにちは jbot"))
+        self.player.enqueue.assert_called_once()
+        self.assertEqual(self.player.enqueue.call_args.args[0], "こんにちは")
+
+    async def test_a_bare_call_suffix_is_not_read_aloud(self):
+        for text in ("jbot", "JBOT", " jbot "):
+            with self.subTest(text=text):
+                self.player.enqueue.reset_mock()
+                await self.cog.on_message(message(text))
+                self.player.enqueue.assert_not_called()
+
+    async def test_call_suffix_can_be_disabled_or_changed(self):
+        self.cog.config.talk_call_suffix = ""
+        await self.cog.on_message(message("こんにちは jbot"))
+        self.assertEqual(self.player.enqueue.call_args.args[0], "こんにちは jbot")
+
+        self.player.enqueue.reset_mock()
+        self.cog.config.talk_call_suffix = "ボット"
+        await self.cog.on_message(message("こんにちは ボット"))
+        self.assertEqual(self.player.enqueue.call_args.args[0], "こんにちは")
+
+    def sent(self, channel_id=123, ident=77):
+        return SimpleNamespace(
+            id=ident,
+            guild=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=channel_id),
+        )
+
+    async def test_own_response_is_read_with_the_default_speaker(self):
+        await self.cog.speak_own_response(self.sent(), "応答です")
+        self.player.enqueue.assert_called_once()
+        args = self.player.enqueue.call_args.args
+        self.assertEqual(args[:3], ("応答です", 1, 1.2))
+        self.assertEqual(args[3], "77")
+        self.assertEqual(args[4], "1:999")
+
+    async def test_own_response_outside_the_reading_channel_is_not_read(self):
+        await self.cog.speak_own_response(self.sent(channel_id=999), "よその返信")
+        self.player.enqueue.assert_not_called()
+
+    async def test_own_response_is_not_read_in_wav_or_none_mode(self):
+        for mode in ("wav", "none"):
+            with self.subTest(mode=mode):
+                self.cog.config.read_mode = mode
+                await self.cog.speak_own_response(self.sent(), "応答")
+                self.player.enqueue.assert_not_called()
+        self.cog.config.read_mode = "tts"
+
+    async def test_bot_posts_are_not_read_by_watching_messages(self):
+        # 読み上げは会話の応答を投稿した側が明示的に呼ぶ。投稿を監視して拾わない。
+        await self.cog.on_message(
+            message("応答です", author_id=999, bot=True, reference=SimpleNamespace(message_id=1))
+        )
         self.player.enqueue.assert_not_called()
 
     async def test_sound_command_uses_dictionary_and_speed(self):

@@ -5,11 +5,12 @@
 
 同じファイルに**読み上げモード**も持つ:
 
-- ``tts`` … 通常どおり TTS で読み上げる
+- ``tts`` … テキストは TTS で読み上げ、辞書の wav も鳴らす
 - ``wav`` … 辞書に登録した wav だけ鳴らし、TTS は使わない
+- ``none`` … 何も鳴らさない
 
-``atmos``（z170 の gemma4-atmos-sft）を選ぶと ``wav`` になる。GPU をモデルが
-使っている間に読み上げの合成で取り合わないため。``/llm read`` で単独に変えられる。
+読み上げモードはバックエンドとは独立している。バックエンドを切り替えても
+読み上げモードは変わらず、``/llm read`` で明示的に変えたときだけ変わる。
 """
 
 from __future__ import annotations
@@ -41,12 +42,16 @@ BACKENDS = (
     "openai",
 )
 
-READ_MODES = ("tts", "wav")
+READ_MODES = ("tts", "wav", "none")
 
 
 @dataclass(frozen=True)
 class BackendInfo:
-    """``/llm status`` に出す説明と、切り替えたときの既定の読み上げモード。"""
+    """``/llm status`` に出す説明。
+
+    ``read_mode`` は後方互換のために残した未使用の項目。読み上げモードは
+    バックエンドによって変わらない。
+    """
 
     display: str
     detail: str
@@ -70,7 +75,6 @@ INFO = {
     "atmos": BackendInfo(
         "gemma4-atmos-sft（z170）",
         "文脈8192・同時4本・約26トークン/秒。#雑談vc の会話で調整した LoRA",
-        read_mode="wav",
         manages_process=False,
     ),
 }
@@ -116,12 +120,23 @@ def display_name(backend: str) -> str:
 
 
 def read_mode_label(mode: str) -> str:
-    return "辞書wavのみ（TTSなし）" if mode == "wav" else "TTSで読み上げ"
+    """読み上げモードの表示名。"""
+
+    if mode == "wav":
+        return "辞書wavのみ（TTSなし）"
+    if mode == "none":
+        return "読み上げなし"
+    return "TTSで読み上げ"
 
 
-def default_read_mode(backend: str) -> str:
-    info = INFO.get(backend)
-    return info.read_mode if info else "tts"
+def default_read_mode(backend: str | None = None) -> str:
+    """後方互換の入口。読み上げモードはバックエンドに依存しないので常に ``tts``。
+
+    以前はバックエンドごとの既定（atmos なら ``wav``）を返していたが、
+    その連動は廃止した。呼び出し側のシグネチャを保つために残している。
+    """
+
+    return "tts"
 
 
 def state_path() -> Path:
@@ -220,7 +235,8 @@ def snapshot(channel_id=None) -> dict:
 
     saved = stored()
     backend = saved["backend"] or _default_backend()
-    mode = saved["read_mode"] or default_read_mode(backend)
+    # 読み上げモードは全体設定。バックエンドを変えても引き継ぐ。
+    mode = saved["read_mode"] or "tts"
     channels = saved["channels"]
 
     if channel_id is None:
@@ -235,9 +251,6 @@ def snapshot(channel_id=None) -> dict:
             channel_backend = ""
 
     effective = channel_backend or backend
-
-    if channel_backend:
-        mode = default_read_mode(channel_backend)
 
     return {
         "backend": effective,
@@ -267,7 +280,10 @@ def active_read_mode() -> str:
 
 
 def set_selection(backend: str | None = None, read_mode: str | None = None) -> dict:
-    """保存する。``backend`` を変えて ``read_mode`` を省くと、その既定に合わせる。"""
+    """保存する。``read_mode`` を省くと、いまの読み上げモードを引き継ぐ。
+
+    ``backend`` を変えても読み上げモードは変えない（明示したときだけ変わる）。
+    """
 
     current = snapshot()
     target = (backend or current["backend"]).strip().lower()
@@ -276,7 +292,7 @@ def set_selection(backend: str | None = None, read_mode: str | None = None) -> d
         raise ValueError(f"不明なバックエンドです: {backend}")
 
     if read_mode is None:
-        mode = default_read_mode(target) if backend else current["read_mode"]
+        mode = current["read_mode"]
     else:
         mode = read_mode.strip().lower()
 
@@ -347,8 +363,7 @@ def _write_state(saved: dict, channels: dict[int, str]) -> None:
     payload = {
         "version": 1,
         "backend": saved["backend"] or _default_backend(),
-        "read_mode": saved["read_mode"]
-        or default_read_mode(saved["backend"] or _default_backend()),
+        "read_mode": saved["read_mode"] or "tts",
         "channels": {str(k): v for k, v in channels.items()},
         "updated": time.time(),
     }

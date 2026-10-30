@@ -223,6 +223,8 @@ class TranslationClient:
 
     context_window = 4096
     prompt_style = prompts.SYSTEM
+    #: 画像入力を渡せるか。ローカル llama.cpp は mmproj を持たない前提。
+    supports_images = False
 
     def __init__(
         self, base_url, key_file, timeout=45, api_key=None,
@@ -388,6 +390,8 @@ class SarashinaClient:
 
     context_window = 128000
     prompt_style = prompts.SYSTEM
+    #: Sarashina はテキスト専用（画像 parts を送らない）。
+    supports_images = False
     max_completion_tokens = 8000
     retry_status = frozenset({429, 500, 502, 503, 504})
     retries = 3
@@ -618,8 +622,18 @@ class SarashinaClient:
                 await asyncio.sleep(delay)
 
     async def prompt_tokens(self, messages):
-        """概算。日本語混在を見て多め（2文字≒1〜2トークン）に数える。"""
-        return sum(len(str(message.get("content") or "")) * 3 // 4 + 8 for message in messages)
+        """概算。日本語混在を見て多め（2文字≒1〜2トークン）に数える。
+
+        画像 parts は base64 を数えず、1枚を :data:`prompts.IMAGE_TOKENS` にする。
+        """
+
+        total = 0
+
+        for message in messages:
+            chars, images = prompts.content_size(message.get("content"))
+            total += chars * 3 // 4 + images * prompts.IMAGE_TOKENS + 8
+
+        return total
 
     async def translate(self, text):
         payload = {
@@ -696,6 +710,9 @@ class AtmosClient:
     retry_delay = 1.0
     #: チャットテンプレートが system を model ターンとして描くので送らない。
     prompt_style = prompts.PLAIN
+    #: gemma4 系だけ画像を読める（llama.cpp の mmproj を読み込んでいる）。
+    #: 実際に mmproj があるかはサーバー起動時の設定次第（報告の未検証点）。
+    supports_images = True
 
     def __init__(self, base_url, model, timeout=30, max_tokens=1024, context=8192,
                  api_key=None, translate_model=None):
@@ -763,9 +780,18 @@ class AtmosClient:
         return isinstance(data, dict) and data.get("status") == "ok"
 
     async def prompt_tokens(self, messages):
-        """概算（``/tokenize`` を叩くと往復が増えるので、文字数から数える）。"""
+        """概算（``/tokenize`` を叩くと往復が増えるので、文字数から数える）。
 
-        return sum(len(str(message.get("content") or "")) * 3 // 4 + 8 for message in messages)
+        画像は base64 を数えず、1枚を :data:`prompts.IMAGE_TOKENS` の固定値にする。
+        """
+
+        total = 0
+
+        for message in messages:
+            chars, images = prompts.content_size(message.get("content"))
+            total += chars * 3 // 4 + images * prompts.IMAGE_TOKENS + 8
+
+        return total
 
     def _payload(self, messages, max_tokens, temperature, stream):
         return {
@@ -862,7 +888,10 @@ class AtmosClient:
 
 class OpenAIClient(AtmosClient):
     """汎用 Chat Completions。llama.cpp 固有のオプションは送らない。"""
+
     prompt_style = prompts.SYSTEM
+    #: 汎用 API でも画像は送らない（この Bot の画像対応は gemma4 系だけ）。
+    supports_images = False
 
     def __init__(self, base_url, model, **kwargs):
         root = base_url.rstrip("/")

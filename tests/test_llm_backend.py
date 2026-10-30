@@ -2,7 +2,7 @@
 
 - 選んだバックエンドと読み上げモードは ``data/llm_backend.json`` に残る
 - ``atmos``（z170 の gemma4-atmos-sft）は llama.cpp の OpenAI 互換 API
-- ``atmos`` を選ぶと読み上げは「辞書wavのみ」になる
+- 読み上げモードはバックエンドと独立で、切り替えても変わらない
 """
 
 import asyncio
@@ -64,15 +64,28 @@ class BackendStateTests(unittest.TestCase):
         self.assertEqual(snapshot["source"], "file")
         saved = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(saved["backend"], "atmos")
-        self.assertEqual(saved["read_mode"], "wav")
+        self.assertEqual(saved["read_mode"], "tts")
         self.assertEqual(saved["version"], 1)
 
-    def test_atmos_turns_reading_into_wav_only(self):
+    def test_backend_switch_keeps_the_reading_mode(self):
         llm_backend.set_selection("atmos")
+        self.assertEqual(llm_backend.active_read_mode(), "tts")
+
+        llm_backend.set_selection(read_mode="wav")
+        llm_backend.set_selection("sarashina")
+        self.assertEqual(llm_backend.snapshot()["backend"], "sarashina")
         self.assertEqual(llm_backend.active_read_mode(), "wav")
 
-        llm_backend.set_selection("sarashina")
-        self.assertEqual(llm_backend.active_read_mode(), "tts")
+    def test_every_read_mode_is_accepted(self):
+        for mode in ("tts", "wav", "none"):
+            with self.subTest(mode=mode):
+                llm_backend.set_selection(read_mode=mode)
+                self.assertEqual(llm_backend.active_read_mode(), mode)
+
+    def test_read_mode_labels_cover_three_modes(self):
+        self.assertEqual(llm_backend.read_mode_label("tts"), "TTSで読み上げ")
+        self.assertEqual(llm_backend.read_mode_label("wav"), "辞書wavのみ（TTSなし）")
+        self.assertEqual(llm_backend.read_mode_label("none"), "読み上げなし")
 
     def test_read_mode_can_be_overridden_without_touching_the_backend(self):
         llm_backend.set_selection("atmos", "tts")

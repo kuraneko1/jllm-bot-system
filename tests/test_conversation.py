@@ -320,6 +320,25 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(self.cog.queue.join(), 1)
             self.assertEqual(self.cog.talk_partner(10), 3)
 
+    async def test_a_talk_reply_is_handed_to_the_reader(self):
+        self.cog.reader = SimpleNamespace(speak_own_response=AsyncMock())
+        message = self.message()
+        await self.cog.on_message(message)
+        await asyncio.wait_for(self.cog.queue.join(), 1)
+        self.cog.reader.speak_own_response.assert_awaited_once()
+        sent, page = self.cog.reader.speak_own_response.await_args.args
+        self.assertIs(sent, message.reply.return_value)
+        self.assertTrue(page)
+
+    async def test_translation_replies_are_not_read_aloud(self):
+        self.cog.reader = SimpleNamespace(speak_own_response=AsyncMock())
+        await self.cog.configure(1, 10, {2}, False, talk=False, text={2})
+        message = self.message(300, '翻訳して')
+        await self.cog.on_message(message)
+        await asyncio.wait_for(self.cog.queue.join(), 1)
+        message.reply.assert_awaited()
+        self.cog.reader.speak_own_response.assert_not_awaited()
+
     async def test_talk_off_forgets_the_partner(self):
         await self.cog.on_message(self.message(90, '<@99> こんにちは'))
         await asyncio.wait_for(self.cog.queue.join(), 1)

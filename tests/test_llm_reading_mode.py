@@ -86,6 +86,35 @@ class WavOnlyReadingTests(unittest.IsolatedAsyncioTestCase):
         player.enqueue.assert_not_called()
 
 
+class NoneModeReadingTests(unittest.IsolatedAsyncioTestCase):
+    """``none`` では辞書 wav も TTS も鳴らさない（キューにも積まない）。"""
+
+    def build(self):
+        return WavOnlyReadingTests.build(self)
+
+    async def send(self, cog, text="こんにちは"):
+        return await WavOnlyReadingTests.send(self, cog, text)
+
+    async def test_none_mode_plays_neither_wav_nor_tts(self):
+        cog, player = self.build()
+
+        with patch("jllm_plugins.llm.llm_backend.active_read_mode", return_value="none"):
+            await self.send(cog)
+
+        player.enqueue_sound.assert_not_called()
+        player.enqueue.assert_not_called()
+
+    async def test_reader_config_can_force_none(self):
+        cog, player = self.build()
+        cog.config.read_mode = "none"
+
+        with patch("jllm_plugins.llm.llm_backend.active_read_mode", return_value="tts"):
+            await self.send(cog)
+
+        player.enqueue_sound.assert_not_called()
+        player.enqueue.assert_not_called()
+
+
 class AnnouncementTests(unittest.IsolatedAsyncioTestCase):
     async def test_wav_only_mode_does_not_announce_joins(self):
         cog = ReaderCog.__new__(ReaderCog)
@@ -112,6 +141,36 @@ class AnnouncementTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(cog.config, "vc_announcement_enabled", True), \
              patch("jllm_plugins.llm.llm_backend.active_read_mode", return_value="wav"):
+            await cog.on_voice_state_update(member, before, after)
+
+        player.enqueue_sound.assert_not_called()
+        player.enqueue.assert_not_called()
+
+    async def test_none_mode_does_not_announce_joins(self):
+        cog = ReaderCog.__new__(ReaderCog)
+        cog._user_key = lambda guild_id, user_id: f"{guild_id}:{user_id}"
+        cog.voice_entries = {}
+        cog._save_voice_entries = Mock()
+        player = SimpleNamespace(
+            closed=False,
+            voice_client=SimpleNamespace(
+                is_connected=lambda: True,
+                channel=SimpleNamespace(id=5),
+            ),
+            enqueue_sound=Mock(),
+            enqueue=Mock(),
+        )
+        cog.players = {1: player}
+        member = SimpleNamespace(
+            id=2, bot=False, display_name="だれか", name="dareka",
+            guild=SimpleNamespace(id=1),
+            voice=SimpleNamespace(channel=SimpleNamespace(id=5)),
+        )
+        before = SimpleNamespace(channel=None)
+        after = SimpleNamespace(channel=SimpleNamespace(id=5))
+
+        with patch.object(cog.config, "vc_announcement_enabled", True), \
+             patch("jllm_plugins.llm.llm_backend.active_read_mode", return_value="none"):
             await cog.on_voice_state_update(member, before, after)
 
         player.enqueue_sound.assert_not_called()

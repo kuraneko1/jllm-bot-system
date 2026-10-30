@@ -16,6 +16,7 @@ from jllm_plugins.conversation.conversation import (
     ConversationCancelled,
     ConversationService,
     conversation_pages,
+    has_source_attachment,
     referenced_message,
 )
 from jllm_plugins.conversation.kitasan import KitasanService
@@ -408,6 +409,7 @@ class TranslationCog(commands.Cog):
         kitasan=_DEFAULT,
         config=None,
         miq=_DEFAULT,
+        reader=None,
     ):
         self.bot = bot
         self.restrictions = restrictions or UserRestrictions()
@@ -436,6 +438,8 @@ class TranslationCog(commands.Cog):
             if kitasan is _DEFAULT else kitasan
         )
         self.miq = miq
+        # 会話の応答を読み上げるための任意の入口（feature.reader）。
+        self.reader = reader
         self.talk_pending = set()
         # いま話している相手（チャンネルID → (ユーザーID, 最終やり取りの時刻)）。
         # 会話を続けられるのはこの人だけ。別の人はメンションでは割り込めず、
@@ -849,6 +853,8 @@ class TranslationCog(commands.Cog):
 
         if snapshot["read_mode"] == "wav":
             lines.append("辞書に登録した wav だけ鳴らし、TTS は使いません（入室案内もしません）。")
+        elif snapshot["read_mode"] == "none":
+            lines.append("読み上げを止めています。/join していても何も鳴らしません。")
 
         if health is True:
             lines.append("疎通: OK")
@@ -913,7 +919,7 @@ class TranslationCog(commands.Cog):
     )
     @app_commands.describe(
         backend="使うバックエンド",
-        read_mode="読み上げモード（省略時はバックエンドの既定）",
+        read_mode="読み上げモード（省略時はいまのモードを維持）",
     )
     @app_commands.choices(
         backend=[
@@ -925,6 +931,7 @@ class TranslationCog(commands.Cog):
         read_mode=[
             app_commands.Choice(name="TTSで読み上げ", value="tts"),
             app_commands.Choice(name="辞書wavのみ（TTSしない）", value="wav"),
+            app_commands.Choice(name="読み上げなし", value="none"),
         ],
     )
     async def llm_switch(
@@ -1011,11 +1018,12 @@ class TranslationCog(commands.Cog):
         name="read",
         description="読み上げモードだけを変えます（モデルはそのまま）",
     )
-    @app_commands.describe(mode="TTSで読み上げる / 辞書wavだけ鳴らす")
+    @app_commands.describe(mode="TTSで読み上げる / 辞書wavだけ鳴らす / 何も鳴らさない")
     @app_commands.choices(
         mode=[
             app_commands.Choice(name="TTSで読み上げ", value="tts"),
             app_commands.Choice(name="辞書wavのみ（TTSしない）", value="wav"),
+            app_commands.Choice(name="読み上げなし", value="none"),
         ]
     )
     async def llm_read(
@@ -1335,10 +1343,9 @@ class TranslationCog(commands.Cog):
                 message, "前の依頼に回答中です。回答が終わってから次の依頼を送ってください。"
             )
             return
-        if not text and not any(
-            a.filename.lower().endswith((".txt", ".md", ".log"))
-            for a in getattr(message, "attachments", [])
-        ):
+        # 本文が空でも、テキスト添付か画像添付があれば会話として通す。
+        # 画像を実際に読むかは conversation.respond がバックエンドを見て決める。
+        if not text and not has_source_attachment(message):
             return
         key = self.settings.key(message.guild.id, message.channel.id)
         reply_to = getattr(getattr(message, "reference", None), "message_id", None)
@@ -1386,6 +1393,16 @@ class TranslationCog(commands.Cog):
                 )
         except Exception:
             logger.exception("会話セッションの保存に失敗: %s", session_id)
+
+    async def _speak_own_page(self, sent, page):
+        """会話の応答を読み上げる（reader が居るときだけ）。"""
+        speak = getattr(self.reader, "speak_own_response", None)
+        if speak is None:
+            return
+        try:
+            await speak(sent, page)
+        except Exception:
+            logger.exception("会話の応答の読み上げに失敗")
 
     async def warn(self, message, text):
         now = time.monotonic()
@@ -1441,6 +1458,7 @@ class TranslationCog(commands.Cog):
                         if sent_id is not None:
                             sent_ids.append(sent_id)
                             sent_at = sent_at or getattr(sent, "created_at", None)
+                        await self._speak_own_page(sent, page)
 
                     if session_id and self.sessions is not None:
                         await self._save_session_turns(

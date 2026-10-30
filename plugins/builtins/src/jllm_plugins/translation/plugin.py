@@ -32,6 +32,7 @@ class Plugin:
             conversation=ctx.dependencies.get("feature.conversation"),
             kitasan=ctx.dependencies.get("feature.kitasan"),
             miq=ctx.dependencies.get("feature.miq"),
+            reader=ctx.dependencies.get("feature.reader"),
             config=config,
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)

@@ -93,6 +93,25 @@ def prepare_text(content: str, max_length: int = 200) -> str:
     return content
 
 
+def strip_call_suffix(content: str, suffix: str = "jbot") -> str:
+    """本文末尾の呼び出し語（既定 ``jbot``）を取り除く。
+
+    大文字小文字は区別しない。英数字が直に続く語尾（例: ``foojbot``）は本文の
+    一部とみなして残す。suffix が空なら何もしない。
+    """
+
+    suffix = (suffix or "").strip()
+    if not suffix:
+        return content
+    text = content.rstrip()
+    if not text.casefold().endswith(suffix.casefold()):
+        return content
+    head = text[: len(text) - len(suffix)]
+    if head and head[-1].isascii() and head[-1].isalnum():
+        return content
+    return head.rstrip()
+
+
 def _is_emoji(char: str) -> bool:
     code = ord(char)
     if code in (0x2122, 0x2139, 0x24C2, 0x3030, 0x303D, 0x3297, 0x3299):
@@ -146,6 +165,7 @@ class ReaderConfig:
     vc_announcement_cooldown_seconds: int = 3600
     wav_enabled: bool = True
     read_mode: str = "tts"
+    talk_call_suffix: str = "jbot"
     duck_enabled: bool = False
     owner_id: int = 0
     default_speaker: int = 1
@@ -343,12 +363,19 @@ class ReaderCog(commands.Cog):
         return self.voice_entries
 
     def _read_mode(self):
-        if self.config.read_mode == "wav":
-            return "wav"
+        """読み上げモード（``tts`` / ``wav`` / ``none``）。
+
+        設定で ``wav`` か ``none`` を明示していればそれを優先し、
+        それ以外は LLM 側の全体設定（``/llm read``）に従う。
+        """
+
+        if self.config.read_mode in ("wav", "none"):
+            return self.config.read_mode
         try:
-            return llm_backend.active_read_mode()
+            mode = llm_backend.active_read_mode()
         except Exception:
             return self.config.read_mode
+        return mode if mode in ("tts", "wav", "none") else self.config.read_mode
 
     def _save_voice_history(self):
         if "settings" in self.__dict__:
@@ -683,6 +710,58 @@ class ReaderCog(commands.Cog):
         )
         await interaction.response.send_message(message, ephemeral=True)
 
+    async def speak_own_response(self, sent, text: str) -> None:
+        """会話の応答（Bot 自身の投稿本文）を TTS で読む。
+
+        読むのは ``/join`` した読み上げ対象チャンネルだけで、読み上げモードが
+        ``tts`` のときだけ。**会話の応答を投稿した側から明示的に呼ぶ**。
+        翻訳結果やコマンド応答を二重に読まないよう、投稿を監視して拾うのではなく
+        この入口だけを使う。
+        """
+
+        if self._read_mode() != "tts":
+            return
+        guild = getattr(sent, "guild", None)
+        channel = getattr(sent, "channel", None)
+        if guild is None or channel is None:
+            return
+        player = self.players.get(guild.id)
+        if (
+            player is None
+            or channel.id != player.text_channel_id
+            or not player.voice_client.is_connected()
+        ):
+            return
+        # 応答は Discord の 1 ページ（最大 1900 字）単位で来るので、そのまま読む。
+        text = prepare_text(text, 1900)
+        text = filter_emojis(text, player.allow_nonverbal_emojis)
+        if not has_readable_text(text):
+            return
+        text = self.readings.apply(text)
+        if not text.strip():
+            return
+        bot_id = getattr(getattr(self.bot, "user", None), "id", 0)
+        # 話者・効果・速度は既定のまま読む。
+        player.enqueue(
+            text,
+            player.speaker_id,
+            self.config.default_speed,
+            str(getattr(sent, "id", "") or ""),
+            self._user_key(guild.id, bot_id),
+        )
+
+    def _joined_channel(self, message) -> bool:
+        """いま /join している読み上げ対象チャンネルかどうか。"""
+
+        players = getattr(self, "players", None) or {}
+        player = players.get(message.guild.id)
+        if player is None:
+            return False
+        return (
+            player.voice_client.is_connected()
+            and message.channel.id == player.text_channel_id
+        )
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.guild is None or message.author.bot or self._restricted(message, "ignore"):
@@ -699,7 +778,11 @@ class ReaderCog(commands.Cog):
         )
         if is_miq or is_kitasan:
             return
-        channel_allowed = self.config.channel_allowed(message.channel.id)
+        # /join したチャンネルは、許可リストに無くても読み上げ対象にする。
+        # 入室した場所がそのまま読み上げ先になる（範囲外のチャットは読まない）。
+        channel_allowed = self.config.channel_allowed(message.channel.id) or (
+            self._joined_channel(message)
+        )
         content = message.content.casefold()
         if not channel_allowed:
             if not any(
@@ -725,6 +808,10 @@ class ReaderCog(commands.Cog):
             or not player.voice_client.is_connected()
         ):
             return
+        mode = self._read_mode()
+        if mode == "none":
+            # 読み上げ無し。テキストも wav もキューに積まない。
+            return
         if message.content.startswith(SKIP_PREFIXES):
             return
         bot_user = getattr(self.bot, "user", None)
@@ -734,7 +821,10 @@ class ReaderCog(commands.Cog):
             if player.skip_current_post():
                 await self._react_skip(message)
             return
-        read_text = tts_message_text(message)
+        # 語尾の呼び出し語（既定 jbot）は読まない。
+        read_text = strip_call_suffix(
+            tts_message_text(message), self.config.talk_call_suffix
+        )
         command = parse_commands(read_text)
         post_id = str(message.id)
         author_key = self._user_key(message.guild.id, message.author.id)
@@ -790,7 +880,7 @@ class ReaderCog(commands.Cog):
             await self._react_skip(message)
         gain = await self.tts_gain_for(speaker_key)
         wav_blocked = self._restricted(message, "wav")
-        speak = self._read_mode() != "wav"
+        speak = mode == "tts"
         for chunk, chunk_speed, chunk_effects in pieces:
             for segment in self.dictionary.split(chunk):
                 if segment.kind == "sound":
@@ -842,7 +932,7 @@ class ReaderCog(commands.Cog):
             or after_id != player.voice_client.channel.id
             or player.closed
             or not player.voice_client.is_connected()
-            or self._read_mode() == "wav"
+            or self._read_mode() != "tts"
         ):
             return
         now = time.time()
@@ -1790,6 +1880,7 @@ class Plugin:
             ),
             wav_enabled=ctx.config.get("wav_enabled", True),
             read_mode=ctx.config.get("read_mode", "tts"),
+            talk_call_suffix=ctx.config.get("talk_call_suffix", "jbot"),
             duck_enabled=ctx.config.get("duck_enabled", False),
             owner_id=ctx.config.get("owner_id", 0),
             default_speaker=ctx.config.get("default_speaker", 1),

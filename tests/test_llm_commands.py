@@ -72,30 +72,29 @@ class SwitchCommandTests(unittest.IsolatedAsyncioTestCase):
             followup=SimpleNamespace(send=send),
         )
 
-    async def test_switch_to_atmos_persists_and_switches_reading_mode(self):
+    async def test_switch_to_atmos_persists_without_changing_the_reading_mode(self):
         cog = self.build_cog()
         interaction = self.interaction()
 
         await cog._llm_switch_to(interaction, "atmos")
 
         text = interaction.followup.send.await_args.args[0]
-        self.assertIn("辞書wavのみ", text)
         self.assertIn("疎通: OK", text)
         snapshot = llm_backend.snapshot()
         self.assertEqual(snapshot["backend"], "atmos")
-        self.assertEqual(snapshot["read_mode"], "wav")
+        self.assertEqual(snapshot["read_mode"], "tts")
         self.assertEqual(cog.client.backend, "atmos")
         self.assertEqual(self.built, ["sarashina", "atmos"])
 
-    async def test_switch_back_to_sarashina_restores_tts(self):
-        llm_backend.set_selection("atmos")
+    async def test_switch_back_to_sarashina_keeps_the_reading_mode(self):
+        llm_backend.set_selection("atmos", "wav")
         cog = self.build_cog()
         interaction = self.interaction()
 
         await cog._llm_switch_to(interaction, "sarashina")
 
         self.assertEqual(llm_backend.snapshot()["backend"], "sarashina")
-        self.assertEqual(llm_backend.snapshot()["read_mode"], "tts")
+        self.assertEqual(llm_backend.snapshot()["read_mode"], "wav")
 
     async def test_switching_to_the_same_backend_is_a_no_op(self):
         llm_backend.set_selection("atmos")
@@ -241,13 +240,13 @@ class ChannelOverrideTests(unittest.TestCase):
         self.assertEqual(snap["global_backend"], "sarashina")
         self.assertEqual(snap["source"], "channel")
 
-    def test_read_mode_follows_channel_backend(self):
-        llm_backend.set_selection("sarashina")
+    def test_channel_backend_does_not_change_the_read_mode(self):
+        llm_backend.set_selection("sarashina", "wav")
         llm_backend.set_channel(111, "atmos")
 
-        # atmos の既定は「辞書wavのみ」
+        # 読み上げモードはチャンネル別ではなく全体の設定。
         self.assertEqual(llm_backend.snapshot(111)["read_mode"], "wav")
-        self.assertEqual(llm_backend.snapshot(222)["read_mode"], "tts")
+        self.assertEqual(llm_backend.snapshot(222)["read_mode"], "wav")
 
 
 class ChannelContextClientTests(unittest.TestCase):
