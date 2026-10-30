@@ -36,10 +36,21 @@ class Plugin:
         )
         remove = await ctx.dependencies["discord.gateway"].add_cog(self.cog)
         ctx.scope.add(remove)
+        client = self.cog.client
+        callback = self.cog.admin_select
+        client.admin_select = callback
+
+        def remove_callback():
+            if getattr(client, "admin_select", None) is callback:
+                del client.admin_select
+
+        ctx.scope.add(remove_callback)
+        self._remove_callback = remove_callback
         return {}
 
     async def start(self):
         pass
 
     async def stop(self):
+        self._remove_callback()
         await self.cog.cog_unload()

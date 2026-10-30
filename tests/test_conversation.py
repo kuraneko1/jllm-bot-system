@@ -3,6 +3,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -207,6 +208,44 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         message.author = self.other_member()
         return message
 
+    async def test_existing_session_uses_current_channel_backend_not_saved_model(self):
+        from jllm_plugins.llm import llm_backend
+        from jllm_plugins.llm.translation import SwitchableClient
+
+        self.client.model = 'old-model'
+        start = self.message(90, '<@99> 最初の呼び出し')
+        start.reply = AsyncMock(return_value=SimpleNamespace(id=101))
+        await self.cog.on_message(start)
+        await asyncio.wait_for(self.cog.queue.join(), 1)
+        session_id = self.cog.sessions.message(101)['session_id']
+        self.assertEqual(self.cog.sessions.settings(session_id)['model'], 'old-model')
+
+        selected = FakeClient()
+        selected.model = 'current-model'
+        effective_models = []
+        complete = selected.complete
+
+        async def capture(messages, max_tokens=768, temperature=0.5, model=None):
+            effective_models.append(model or selected.model)
+            return await complete(messages, max_tokens, temperature, model)
+
+        selected.complete = capture
+        default = FakeClient()
+        router = SwitchableClient(backend='default', factory=lambda name: {
+            'default': default, 'channel': selected,
+        }[name])
+        self.cog.client = router
+        self.cog.conversation.client = router
+        reply = self.message(102, '続けて', self.message(101, '前の回答', bot=True))
+        with patch.object(llm_backend, 'stored', return_value={'channels': {10: 'channel'}}):
+            await self.cog.on_message(reply)
+            await asyncio.wait_for(self.cog.queue.join(), 1)
+        reply.reply.assert_awaited_once()
+        self.assertEqual(selected.models, [None])
+        self.assertEqual(effective_models, ['current-model'])
+        self.assertFalse(default.requests)
+        self.assertEqual(self.cog.sessions.settings(session_id)['model'], 'old-model')
+
     async def test_other_member_reply_forks_and_mention_is_ignored(self):
         # 本人が会話を始める（Botの回答が message_id 101 で登録される）
         start = self.message(90, '<@99> 最初の呼び出し')
@@ -324,6 +363,73 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         result = await self.cog.conversation.respond(message, '要約してください', 99, lambda:True)
         self.assertGreater(len(self.client.requests), 2)
         self.assertIn('分割して要約', result)
+
+    async def test_lease_keeps_backend_for_compression_and_reply(self):
+        first, second = FakeClient(), FakeClient()
+        first.prompt_style, second.prompt_style = 'plain', 'system'
+        second.context_window = 100000
+        switched = []
+        original_tokens = first.prompt_tokens
+
+        class Router:
+            current = first
+            released = False
+
+            @asynccontextmanager
+            async def lease(self):
+                client = self.current
+                try:
+                    yield client
+                finally:
+                    self.released = True
+
+        router = Router()
+
+        async def switch_during_tokenization(messages):
+            router.current = second
+            switched.append(True)
+            return await original_tokens(messages)
+
+        first.prompt_tokens = switch_during_tokenization
+        self.cog.conversation.client = router
+        message = self.message()
+        message.attachments = [SimpleNamespace(filename='text.txt', size=16000,
+                                               read=AsyncMock(return_value=('長い文章の内容。' * 2000).encode()))]
+        result = await self.cog.conversation.respond(message, '要約してください', 99, lambda: True, model='test')
+        self.assertTrue(switched)
+        self.assertGreater(len(first.requests), 2)
+        self.assertTrue(all([m['role'] for m in req] == ['user'] for req in first.requests))
+        self.assertTrue(all(model == 'test' for model in first.models))
+        self.assertFalse(second.requests)
+        self.assertIn('分割して要約', result)
+        self.assertTrue(router.released)
+
+    async def test_lease_released_when_cancelled_during_completion(self):
+        started = asyncio.Event()
+        released = asyncio.Event()
+
+        async def blocked(*args, **kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        self.client.complete = blocked
+        client = self.client
+
+        class Router:
+            @asynccontextmanager
+            async def lease(self):
+                try:
+                    yield client
+                finally:
+                    released.set()
+
+        self.cog.conversation.client = Router()
+        task = asyncio.create_task(self.cog.conversation.respond(self.message(), '質問', 99, lambda: True))
+        await asyncio.wait_for(started.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(released.is_set())
 
     async def test_pending_request_limit_and_cancel_before_model_call(self):
         message = self.message()

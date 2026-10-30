@@ -1,4 +1,5 @@
 from . import llm_backend
+from .admin_config import DEFAULTS, AdminConfig
 from .translation import SwitchableClient, build_translation_client
 
 
@@ -30,15 +31,16 @@ class Plugin:
             ctx.config.get("state_file", "llm_backend.json")
         )
         llm_backend.configure_state(state_file, backend)
-        configs = {
-            "local": dict(ctx.config.get("local", {})),
-            "sarashina": dict(ctx.config.get("sarashina", {})),
-            "atmos": dict(ctx.config.get("atmos", {})),
-        }
+        configs = {name: dict(ctx.config.get(name, {})) for name in DEFAULTS}
+        admin = AdminConfig(
+            ctx.dependencies["storage.local"].legacy_path("llm_provider_config.json"), configs
+        )
         self.client = RoutedSwitchableClient(
             backend=llm_backend.snapshot()["global_backend"],
-            factory=lambda name: build_translation_client(name, configs.get(name, {})),
+            factory=lambda name: build_translation_client(name, admin.config(name)),
         )
+        self.client._admin = admin
+        self.client._admin_factory = lambda name, config: build_translation_client(name, config)
         self.state = LLMState()
         ctx.scope.add(self.client.close)
         return {"llm.chat": self.client, "llm.read-mode": self.state}

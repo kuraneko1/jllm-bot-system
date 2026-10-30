@@ -5,6 +5,7 @@
 - ``atmos`` を選ぶと読み上げは「辞書wavのみ」になる
 """
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -280,6 +281,67 @@ class AtmosClientTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SwitchableClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_inflight_request_and_lease_survive_switch(self):
+        started, release = asyncio.Event(), asyncio.Event()
+
+        class FakeClient:
+            def __init__(self, name):
+                self.name, self.closed = name, False
+
+            async def complete(self, *args, **kwargs):
+                started.set()
+                await release.wait()
+                self.assert_open()
+                return self.name
+
+            def assert_open(self):
+                if self.closed:
+                    raise AssertionError('client closed during request')
+
+            async def close(self):
+                self.closed = True
+
+        client = SwitchableClient(backend='sarashina', factory=FakeClient)
+        old = client.inner
+        with patch.object(llm_backend, 'stored', return_value={'channels': {}}):
+            async with client.lease() as leased:
+                request = asyncio.create_task(client.complete([]))
+                await started.wait()
+                await client.switch('atmos')
+                self.assertFalse(old.closed)
+                self.assertIs(leased, old)
+                release.set()
+                self.assertEqual(await request, 'sarashina')
+                self.assertFalse(old.closed)
+            self.assertTrue(old.closed)
+        await client.close()
+
+    async def test_stream_remains_open_until_generator_finishes(self):
+        class FakeClient:
+            def __init__(self, name):
+                self.name, self.closed = name, False
+
+            async def stream(self, *args, **kwargs):
+                yield 'first'
+                if self.closed:
+                    raise AssertionError('stream closed during switch')
+                yield 'second'
+
+            async def close(self):
+                self.closed = True
+
+        client = SwitchableClient(backend='sarashina', factory=FakeClient)
+        old = client.inner
+        with patch.object(llm_backend, 'stored', return_value={'channels': {}}):
+            stream = client.stream([])
+            self.assertEqual(await anext(stream), 'first')
+            await client.switch('atmos')
+            self.assertFalse(old.closed)
+            self.assertEqual(await anext(stream), 'second')
+            await stream.aclose()
+            self.assertTrue(old.closed)
+        await client.close()
+
     async def test_switch_swaps_the_inner_client(self):
         built = []
 

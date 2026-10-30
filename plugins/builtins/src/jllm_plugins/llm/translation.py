@@ -12,10 +12,12 @@
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiohttp
@@ -222,23 +224,28 @@ class TranslationClient:
     context_window = 4096
     prompt_style = prompts.SYSTEM
 
-    def __init__(self, base_url, key_file, timeout=45):
+    def __init__(
+        self, base_url, key_file, timeout=45, api_key=None,
+        model="jllm-translation", translate_model=None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.key_file = key_file
+        self.api_key = api_key
+        self.model = model
+        self.translate_model = translate_model or model
         self.timeout = timeout
         self.session = None
 
     async def translate(self, text):
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
-        key = (
+        key = self.api_key if self.api_key is not None else (
             (await asyncio.to_thread(Path(self.key_file).read_text)).strip()
-            if self.key_file
-            else ""
+            if self.key_file else ""
         )
         headers = {"Authorization": f"Bearer {key}"} if key else {}
         payload = {
-            "model": "jllm-translation",
+            "model": self.translate_model,
             "messages": [
                 {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
                 {"role": "user", "content": text},
@@ -248,7 +255,10 @@ class TranslationClient:
             "stream": False,
         }
         async with self.session.post(
-            self.base_url + "/v1/chat/completions", json=payload, headers=headers
+            self.base_url + "/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            allow_redirects=False,
         ) as response:
             response.raise_for_status()
             data = await response.json()
@@ -263,15 +273,15 @@ class TranslationClient:
     async def post(self, endpoint, payload):
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
-        key = (
+        key = self.api_key if self.api_key is not None else (
             (await asyncio.to_thread(Path(self.key_file).read_text)).strip()
-            if self.key_file
-            else ""
+            if self.key_file else ""
         )
         async with self.session.post(
             self.base_url + endpoint,
             json=payload,
             headers={"Authorization": f"Bearer {key}"} if key else {},
+            allow_redirects=False,
         ) as response:
             response.raise_for_status()
             return await response.json()
@@ -297,7 +307,7 @@ class TranslationClient:
         data = await self.post(
             "/v1/chat/completions",
             {
-                "model": "jllm-translation",
+                "model": self.model,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
@@ -318,6 +328,43 @@ class TranslationClient:
     async def close(self):
         if self.session:
             await self.session.close()
+
+
+class SarashinaRateLimiter:
+    """認証・モデルごとの送信間隔を複数世代のクライアントで共有する。"""
+    def __init__(self):
+        self.entries = {}
+
+    async def acquire(self, credential, model, interval, limit, generation=0):
+        fingerprint = hashlib.sha256(credential.encode("utf-8")).digest()
+        # lock, 前回送信時刻・間隔, 最新世代・その間隔
+        entry = self.entries.setdefault((fingerprint, model), [asyncio.Lock(), 0.0, 0.0, -1, 0.0])
+        lock = entry[0]
+        deadline = time.monotonic() + max(0.0, limit)
+        try:
+            async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
+                await lock.acquire()
+        except TimeoutError:
+            raise ValueError(
+                "翻訳APIの利用上限に達しています。少し待ってから再試行してください。"
+            ) from None
+        try:
+            now = time.monotonic()
+            if generation >= entry[3]:
+                entry[3], entry[4] = generation, interval
+            effective = max(interval, entry[4]) if generation < entry[3] else interval
+            delay = max(0.0, entry[1] + max(entry[2], effective) - now) if entry[1] else 0.0
+            if delay > max(0.0, deadline - now):
+                raise ValueError(
+                    "翻訳APIの利用上限に達しています。少し待ってから再試行してください。"
+                )
+            if delay:
+                await asyncio.sleep(delay)
+            entry[1] = time.monotonic()
+            entry[2] = effective
+            return bool(delay)
+        finally:
+            lock.release()
 
 
 class SarashinaClient:
@@ -366,9 +413,11 @@ class SarashinaClient:
         translate_model=None,
         translate_rpm=None,
         model_rpm=None,
+        api_key=None,
     ):
         self.base_url = base_url.rstrip("/")
         self.key_file = key_file
+        self.api_key = api_key
         self.model = model
         self.translate_model = translate_model or model
         self.timeout = timeout
@@ -384,14 +433,14 @@ class SarashinaClient:
         self.max_wait = max(0.0, float(max_wait))
         self.window = max(1.0, float(window))
         self.waits = 0
-        self._next_slot: dict[str, float] = {}
+        self._rate_limiter = SarashinaRateLimiter()
+        self._rate_generation = 0
 
     async def _headers(self):
         headers = {"Content-Type": "application/json"}
-        key = (
+        key = self.api_key if self.api_key is not None else (
             (await asyncio.to_thread(Path(self.key_file).read_text)).strip()
-            if self.key_file
-            else ""
+            if self.key_file else ""
         )
         if key:
             headers["Authorization"] = f"Bearer {key}"
@@ -408,34 +457,16 @@ class SarashinaClient:
 
         return self.model_rpm.get(model, self.requests_per_minute)
 
-    async def _acquire(self, model=None, max_wait=None):
-        """上限を超えないよう送信間隔を空ける。待ちすぎるなら ValueError。
-
-        上限はモデルごとに独立して数えられるので、間隔もモデルごとに持つ。
-        """
+    async def _acquire(self, model=None, max_wait=None, credential=""):
         model = model or self.model
         rpm = self._rpm_for_model(model)
-
-        if not rpm:
-            return
-
         limit = self.max_wait if max_wait is None else min(self.max_wait, max_wait)
-        interval = self.window / rpm * self.interval_margin
-        now = time.monotonic()
-        next_slot = self._next_slot.get(model, 0.0)
-        delay = next_slot - now
-
-        if delay > 0:
-            if delay > limit:
-                raise ValueError(
-                    f"翻訳APIの利用上限（{rpm}/分）に達しています。少し待ってから再試行してください。"
-                )
-
-            await asyncio.sleep(delay)
+        interval = self.window / rpm * self.interval_margin if rpm else 0.0
+        waited = await self._rate_limiter.acquire(
+            credential, model, interval, limit, self._rate_generation
+        )
+        if waited:
             self.waits += 1
-            now = time.monotonic()
-
-        self._next_slot[model] = max(now, next_slot) + interval
 
     @staticmethod
     def _retry_after(response, fallback):
@@ -464,11 +495,11 @@ class SarashinaClient:
         waited = 0.0
 
         while True:
-            await self._acquire(model, max_wait)
+            await self._acquire(model, max_wait, headers.get("Authorization", ""))
 
             try:
                 async with session.post(
-                    self.base_url + endpoint, json=payload, headers=headers
+                    self.base_url + endpoint, json=payload, headers=headers, allow_redirects=False
                 ) as response:
                     if response.status == 429:
                         delay = self._retry_after(response, self._rate_limit_delay(attempt))
@@ -515,22 +546,24 @@ class SarashinaClient:
             "model": chosen,
             "messages": messages,
             "temperature": temperature,
-            "max_completion_tokens": min(int(max_tokens), self.max_completion_tokens),
             "stream": True,
         }
+        if chosen != "sarashina3.2-mini-thinking":
+            payload["max_completion_tokens"] = min(int(max_tokens), self.max_completion_tokens)
         session = self._session()
         headers = await self._headers()
         attempt = 0
         waited = 0.0
 
         while True:
-            await self._acquire(chosen, self.interactive_max_wait)
+            await self._acquire(chosen, self.interactive_max_wait, headers.get("Authorization", ""))
 
             try:
                 async with session.post(
                     self.base_url + "/v1/chat/completions",
                     json=payload,
                     headers=headers,
+                    allow_redirects=False,
                 ) as response:
                     if response.status == 429 or response.status in self.retry_status:
                         delay = (
@@ -589,20 +622,18 @@ class SarashinaClient:
         return sum(len(str(message.get("content") or "")) * 3 // 4 + 8 for message in messages)
 
     async def translate(self, text):
-        data = await self.post(
-            "/v1/chat/completions",
-            {
-                "model": self.translate_model,
-                "messages": [
-                    {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
-                    {"role": "user", "content": text},
-                ],
-                "temperature": 0.1,
-                "max_completion_tokens": 1536,
-                "stream": False,
-            },
-            model=self.translate_model,
-        )
+        payload = {
+            "model": self.translate_model,
+            "messages": [
+                {"role": "system", "content": TRANSLATION_SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+            "temperature": 0.1,
+            "stream": False,
+        }
+        if self.translate_model != "sarashina3.2-mini-thinking":
+            payload["max_completion_tokens"] = 1536
+        data = await self.post("/v1/chat/completions", payload, model=self.translate_model)
         choice = data["choices"][0]
         if choice.get("finish_reason") == "length":
             raise ValueError("Translation exceeded output limit")
@@ -617,17 +648,16 @@ class SarashinaClient:
         if await self.prompt_tokens(messages) + max_tokens + 64 > self.context_window:
             raise ValueError("会話がモデルのコンテキスト上限を超えています。")
         # 会話は相手が待っているので、上限待ちは短めに切る。
+        payload = {
+            "model": chosen,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": False,
+        }
+        if chosen != "sarashina3.2-mini-thinking":
+            payload["max_completion_tokens"] = min(int(max_tokens), self.max_completion_tokens)
         data = await self.post(
-            "/v1/chat/completions",
-            {
-                "model": chosen,
-                "messages": messages,
-                "temperature": temperature,
-                "max_completion_tokens": min(int(max_tokens), self.max_completion_tokens),
-                "stream": False,
-            },
-            max_wait=self.interactive_max_wait,
-            model=chosen,
+            "/v1/chat/completions", payload, max_wait=self.interactive_max_wait, model=chosen
         )
         choice = data["choices"][0]
         result = choice["message"]["content"]
@@ -667,9 +697,12 @@ class AtmosClient:
     #: チャットテンプレートが system を model ターンとして描くので送らない。
     prompt_style = prompts.PLAIN
 
-    def __init__(self, base_url, model, timeout=30, max_tokens=1024, context=8192):
+    def __init__(self, base_url, model, timeout=30, max_tokens=1024, context=8192,
+                 api_key=None, translate_model=None):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.api_key = api_key or ""
+        self.translate_model = translate_model or model
         self.timeout = timeout
         self.max_completion_tokens = max(1, int(max_tokens))
         self.context_window = max(512, int(context))
@@ -683,6 +716,9 @@ class AtmosClient:
             )
         return self.session
 
+    def _headers(self):
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
     async def post(self, endpoint, payload):
         """接続断と 5xx だけ短く再試行する（4本スロットなので待ちは短め）。"""
 
@@ -691,7 +727,8 @@ class AtmosClient:
 
         while True:
             try:
-                async with session.post(self.base_url + endpoint, json=payload) as response:
+                async with session.post(self.base_url + endpoint, json=payload,
+                                        headers=self._headers(), allow_redirects=False) as response:
                     if response.status in self.retry_status and attempt < self.retries:
                         await asyncio.sleep(self.retry_delay * (2**attempt))
                         attempt += 1
@@ -745,15 +782,12 @@ class AtmosClient:
 
     async def translate(self, text):
         # 翻訳の指示は system ではなく本文の先頭に置く（atmos は system を送れない）。
-        data = await self.post(
-            "/v1/chat/completions",
-            self._payload(
-                prompts.instructed_messages(self, TRANSLATION_SYSTEM_PROMPT, text),
-                max_tokens=1536,
-                temperature=0.1,
-                stream=False,
-            ),
+        payload = self._payload(
+            prompts.instructed_messages(self, TRANSLATION_SYSTEM_PROMPT, text),
+            max_tokens=1536, temperature=0.1, stream=False,
         )
+        payload["model"] = self.translate_model
+        data = await self.post("/v1/chat/completions", payload)
         choice = data["choices"][0]
         result = choice["message"]["content"]
 
@@ -794,7 +828,8 @@ class AtmosClient:
         payload = self._payload(messages, max_tokens, temperature, stream=True)
         session = self._session()
 
-        async with session.post(self.base_url + "/v1/chat/completions", json=payload) as response:
+        async with session.post(self.base_url + "/v1/chat/completions", json=payload,
+                                headers=self._headers(), allow_redirects=False) as response:
             response.raise_for_status()
             self.requests += 1
 
@@ -825,6 +860,25 @@ class AtmosClient:
             await self.session.close()
 
 
+class OpenAIClient(AtmosClient):
+    """汎用 Chat Completions。llama.cpp 固有のオプションは送らない。"""
+    prompt_style = prompts.SYSTEM
+
+    def __init__(self, base_url, model, **kwargs):
+        root = base_url.rstrip("/")
+        if root.endswith("/v1"):
+            root = root[:-3]
+        super().__init__(root, model, **kwargs)
+
+    def _payload(self, messages, max_tokens, temperature, stream):
+        # 汎用 API は上限フィールドの対応がモデルごとに異なるためサーバー既定を使う。
+        return {"model": self.model, "messages": messages,
+                "temperature": float(temperature), "stream": stream}
+
+    async def health(self):
+        return None
+
+
 class SwitchableClient:
     """いま選ばれているバックエンドへ委譲する（``/llm switch`` で差し替える）。
 
@@ -839,10 +893,83 @@ class SwitchableClient:
         self._factory = factory or build_translation_client
         #: 全体設定（``/llm switch`` で変わる）。チャンネル設定はここに重ねる。
         self.backend = backend or llm_backend.active_backend()
+        self._sarashina_rate_limiter = SarashinaRateLimiter()
+        self._sarashina_generation = 0
         #: バックエンド名 → クライアント。チャンネルごとに使い分けるので保持する。
-        self._clients = {self.backend: self._factory(self.backend)}
+        self._clients = {self.backend: self._share_rate_limiter(self._factory(self.backend))}
         #: 明示的に固定したいとき（テスト・単発の切替）。通常は None。
         self._pinned = None
+        self._leases = {}
+        self._retired = set()
+        self._admin = None
+        self._admin_lock = asyncio.Lock()
+        self._admin_factory = build_translation_client
+
+    def _share_rate_limiter(self, client):
+        if isinstance(client, SarashinaClient):
+            self._sarashina_generation += 1
+            client._rate_limiter = self._sarashina_rate_limiter
+            client._rate_generation = self._sarashina_generation
+        return client
+
+    def admin_status(self):
+        if self._admin is None:
+            raise ValueError("管理設定が構成されていません。")
+        return self._admin.status(self.backend)
+
+    async def admin_update(self, payload):
+        """編集対象の設定を保存する。選択変更は controller を通して別途行う。"""
+        async with self._admin_lock:
+            return await self._admin_update_locked(payload)
+
+    async def _admin_update_locked(self, payload):
+        if self._admin is None:
+            raise ValueError("管理設定が構成されていません。")
+        name, overrides = self._admin.prepare(payload)
+        try:
+            new_client = self._share_rate_limiter(
+                self._admin_factory(name, self._admin.config(name, overrides))
+            )
+        except Exception:
+            raise ValueError("LLM 設定が不正です。") from None
+        self._admin.save(overrides)
+        self._admin.overrides = overrides
+        previous = self._clients.get(name)
+        self._clients[name] = new_client
+        if previous is not None:
+            await self._retire(previous)
+        return self.admin_status()
+
+    @asynccontextmanager
+    async def lease(self):
+        """一連の操作を同じクライアントで実行し、終了まで接続を保持する。"""
+        client = self._client()
+        key = id(client)
+        self._leases[key] = self._leases.get(key, 0) + 1
+        try:
+            yield client
+        finally:
+            count = self._leases[key] - 1
+            if count:
+                self._leases[key] = count
+            else:
+                del self._leases[key]
+                if key in self._retired:
+                    self._retired.remove(key)
+                    await self._close_client(client)
+
+    @staticmethod
+    async def _close_client(client):
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+    async def _retire(self, client):
+        if self._leases.get(id(client)):
+            self._retired.add(id(client))
+        else:
+            await self._close_client(client)
 
     # --- チャンネル解決 -------------------------------------------------
     def _effective_backend(self):
@@ -873,7 +1000,7 @@ class SwitchableClient:
         client = self._clients.get(backend)
 
         if client is None:
-            client = self._factory(backend)
+            client = self._share_rate_limiter(self._factory(backend))
             self._clients[backend] = client
 
         return client
@@ -901,35 +1028,30 @@ class SwitchableClient:
 
     # --- 委譲 -----------------------------------------------------------
     async def translate(self, text):
-        return await self.inner.translate(text)
+        async with self.lease() as client:
+            return await client.translate(text)
 
     async def complete(self, messages, max_tokens=768, temperature=0.5, model=None):
-        return await self.inner.complete(
-            messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            model=model,
-        )
+        async with self.lease() as client:
+            return await client.complete(
+                messages, max_tokens=max_tokens, temperature=temperature, model=model,
+            )
 
     async def prompt_tokens(self, messages):
-        return await self.inner.prompt_tokens(messages)
+        async with self.lease() as client:
+            return await client.prompt_tokens(messages)
 
     async def stream(self, messages, max_tokens=768, temperature=0.5, model=None):
-        async for delta in self.inner.stream(
-            messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            model=model,
-        ):
-            yield delta
+        async with self.lease() as client:
+            async for delta in client.stream(
+                messages, max_tokens=max_tokens, temperature=temperature, model=model,
+            ):
+                yield delta
 
     async def health(self):
-        check = getattr(self.inner, "health", None)
-
-        if check is None:
-            return None
-
-        return await check()
+        async with self.lease() as client:
+            check = getattr(client, "health", None)
+            return await check() if check is not None else None
 
     async def switch(self, backend):
         """全体設定を差し替える。チャンネル別の設定はそのまま残る。"""
@@ -942,7 +1064,7 @@ class SwitchableClient:
         client = self._clients.get(backend)
 
         if client is None:
-            client = self._factory(backend)
+            client = self._share_rate_limiter(self._factory(backend))
             self._clients[backend] = client
 
         self.backend = backend
@@ -957,10 +1079,7 @@ class SwitchableClient:
         ):
             self._clients.pop(previous_backend, None)
 
-            try:
-                await spare.close()
-            except Exception:  # 古い接続の後始末に失敗しても切替は成立させる
-                pass
+            await self._retire(spare)
 
         return client
 
@@ -974,13 +1093,10 @@ class SwitchableClient:
         return backend in set(overrides)
 
     async def close(self):
-        for client in list(self._clients.values()):
-            try:
-                await client.close()
-            except Exception:  # 1本の後始末が失敗しても他は閉じる
-                pass
-
+        clients = list(self._clients.values())
         self._clients.clear()
+        for client in clients:
+            await self._retire(client)
 
 
 def build_translation_client(backend=None, config=None):
@@ -989,6 +1105,19 @@ def build_translation_client(backend=None, config=None):
 
     backend = (backend or llm_backend.active_backend()).strip().lower()
     config = dict(config or {})
+    if isinstance(config.get("api_url"), str):
+        url = config["api_url"].rstrip("/")
+        config["api_url"] = url[:-3] if url.endswith("/v1") else url
+    if backend == "openai":
+        return OpenAIClient(
+            config.get("api_url", "https://api.openai.com"),
+            config.get("model", "gpt-4o-mini"),
+            timeout=config.get("timeout", 60),
+            max_tokens=config.get("max_tokens", 4096),
+            context=config.get("context", 128000),
+            api_key=config.get("api_key"),
+            translate_model=config.get("translate_model"),
+        )
     if backend == "atmos":
         return AtmosClient(
             config.get("api_url", "http://127.0.0.1:8123"),
@@ -996,6 +1125,8 @@ def build_translation_client(backend=None, config=None):
             timeout=config.get("timeout", 30),
             max_tokens=config.get("max_tokens", 1024),
             context=config.get("context", 8192),
+            api_key=config.get("api_key"),
+            translate_model=config.get("translate_model"),
         )
     if backend == "sarashina":
         return SarashinaClient(
@@ -1007,10 +1138,17 @@ def build_translation_client(backend=None, config=None):
             translate_model=config.get("translate_model"),
             translate_rpm=config.get("translate_rpm"),
             model_rpm=config.get("model_rpm", {}),
+            api_key=config.get("api_key"),
         )
+    if backend != "local":
+        raise ValueError("不明なバックエンドです。")
     return TranslationClient(
         config.get("api_url", "http://127.0.0.1:8081"),
         config.get("key_file", ""),
+        timeout=config.get("timeout", 45),
+        api_key=config.get("api_key"),
+        model=config.get("model", "jllm-translation"),
+        translate_model=config.get("translate_model"),
     )
 
 

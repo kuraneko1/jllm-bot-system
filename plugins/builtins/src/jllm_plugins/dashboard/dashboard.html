@@ -1469,12 +1469,25 @@ table.ov-cmd td em { font-style:normal; color:var(--muted); }
       <button id="recorderTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="recorderPanel" data-tab="recorder">ボイスクローン</button>
       <button id="playgroundTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="playgroundPanel" data-tab="playground">実験場</button>
       <button id="turtleTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="turtlePanel" data-tab="turtle">ウミガメ</button>
+      <button id="llmTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="llmPanel" data-tab="llm">LLM設定</button>
       <button id="webchatTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="webchatPanel" data-tab="webchat">AIチャット</button>
       <button id="sessionsTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="sessionsPanel" data-tab="sessions">会話セッション <span class="tab-count" id="sessionsTabCount"></span></button>
       <button id="requestsTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="requestsPanel" data-tab="requests">話者クローン登録申請 <span class="tab-count" id="requestsTabCount"></span></button>
       <button id="listenTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="listenPanel" data-tab="listen">聞き取り</button>
     </nav>
 
+    <section id="llmPanel" class="admin-only" role="tabpanel" aria-labelledby="llmTab" hidden>
+      <article class="card"><div class="card-head"><div><h2>LLM設定</h2><p>バックエンドごとの接続先とモデルを設定します。既存の会話も次の発言から現在の設定を使用します。履歴は変わりません。</p></div><button id="llmRefresh" class="button secondary small" type="button">再読み込み</button></div>
+        <form id="llmForm">
+          <div class="field-group"><label class="field-label" for="llmBackend">編集するバックエンド</label><p id="llmActive" class="inline-hint"></p><select id="llmBackend" class="field"><option value="sarashina">sarashina</option><option value="local">local</option><option value="atmos">atmos</option><option value="openai">openai</option></select></div>
+          <div class="field-group"><label class="field-label" for="llmUrl">API URL</label><input id="llmUrl" class="field" type="url" maxlength="2048"><p class="inline-hint">接続先のベースURLのみ（パスは /v1 まで）。空欄は変更しません。安全に表示できない既存URLは伏せます。</p></div>
+          <div class="field-group"><label class="field-label" for="llmModel">会話モデル</label><input id="llmModel" class="field" maxlength="2048" required></div>
+          <div class="field-group"><label class="field-label" for="llmTranslate">翻訳モデル</label><input id="llmTranslate" class="field" maxlength="2048"></div>
+          <div class="field-group"><label class="field-label" for="llmKey">APIキー</label><input id="llmKey" class="field" type="password" autocomplete="new-password" maxlength="2048"><p id="llmKeyStatus" class="inline-hint">空欄の場合は変更しません。</p><label><input id="llmRemoveKey" type="checkbox"> 保存時に既存のキーを削除する</label></div>
+          <div id="llmNotice" class="notice" role="status" aria-live="polite"></div><button class="button" type="submit">設定を保存</button> <button id="llmSelect" class="button secondary" type="button">このバックエンドに切り替え</button><p class="inline-hint">切り替えは全体の会話・翻訳に適用されます。設定の未保存の変更は反映されません。localとの切り替えは安全性未確認のため、管理画面では対応していません。</p>
+        </form>
+      </article>
+    </section>
     <section id="overviewPanel" role="tabpanel" aria-labelledby="overviewTab" hidden>
       <div class="intro">
         <div>
@@ -2231,7 +2244,8 @@ table.ov-cmd td em { font-style:normal; color:var(--muted); }
       $("#accessStatus").textContent = isAdmin ? "管理モード" : "閲覧モード";
       if (!isAdmin) {
         if ($("#entryEditor").open) $("#entryEditor").close();
-        if (["voice", "requests"].some(name => $(`#${name}Tab`).getAttribute("aria-selected") === "true")) chooseTab("sound");
+        if (["voice", "requests", "webchat", "llm"].some(name => $(`#${name}Tab`).getAttribute("aria-selected") === "true")) chooseTab("sound");
+        $("#llmKey").value = "";
         $("#requestRows").replaceChildren();
       }
     }
@@ -2623,7 +2637,8 @@ table.ov-cmd td em { font-style:normal; color:var(--muted); }
       renderGifs();
     }
     function chooseTab(name) {
-      if (["voice", "webchat", "requests"].includes(name) && !authenticated) return;
+      if (["voice", "webchat", "requests", "llm"].includes(name) && !authenticated) return;
+      if (name === "llm") loadLlm();
       const previous = document.querySelector("section[role=tabpanel]:not([hidden])");
       if (name === "playground") loadPlayground();
       if (name === "turtle" && typeof loadTurtle === "function") loadTurtle();
@@ -2634,7 +2649,7 @@ table.ov-cmd td em { font-style:normal; color:var(--muted); }
         refreshListening().catch(() => {});
         if (authenticated) loadDuckCurve().catch(() => {});
       }
-      for (const tab of ["sound", "overview", "reading", "gif", "voice", "recorder", "playground", "turtle", "webchat", "sessions", "requests", "listen"]) {
+      for (const tab of ["sound", "overview", "reading", "gif", "voice", "recorder", "playground", "turtle", "webchat", "sessions", "requests", "listen", "llm"]) {
         const selected = tab === name;
         $(`#${tab}Panel`).hidden = !selected;
         $(`#${tab}Tab`).classList.toggle("active", selected);
@@ -3413,6 +3428,50 @@ table.ov-cmd td em { font-style:normal; color:var(--muted); }
     else if (mobileNav.addListener) mobileNav.addListener(placeNavChrome);
     placeNavChrome();
 
+    let llmStatus = null;
+    function showLlmBackend() {
+      const data = llmStatus?.backends[$("#llmBackend").value] || {};
+      $("#llmUrl").value = data.api_url || "";
+      $("#llmModel").value = data.model || "";
+      $("#llmTranslate").value = data.translate_model || "";
+      $("#llmKey").value = "";
+      $("#llmRemoveKey").checked = false;
+      $("#llmKeyStatus").textContent = `${data.key_configured ? "キー設定済み。" : "キー未設定。"}空欄の場合は変更しません。`;
+    }
+    async function loadLlm() {
+      try {
+        llmStatus = await (await api("/api/llm/settings")).json();
+        $("#llmBackend").value = llmStatus.backend;
+        $("#llmActive").textContent = `現在使用中: ${llmStatus.backend}`;
+        showLlmBackend(); clearNotice("#llmNotice");
+      } catch (error) { notice("#llmNotice", error.message); }
+    }
+    $("#llmBackend").addEventListener("change", showLlmBackend);
+    $("#llmRefresh").addEventListener("click", loadLlm);
+    $("#llmSelect").addEventListener("click", async () => {
+      const backend = $("#llmBackend").value;
+      if (!confirm(`${backend} に全体の会話・翻訳を切り替えますか？未保存の設定は反映されません。`)) return;
+      try {
+        llmStatus = await (await api("/api/llm/active", {method:"POST", body:JSON.stringify({backend})})).json();
+        $("#llmActive").textContent = `現在使用中: ${llmStatus.backend}`;
+        notice("#llmNotice", "バックエンドを切り替えました。", "success");
+      } catch (error) { notice("#llmNotice", error.message); }
+    });
+    $("#llmForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = {backend: $("#llmBackend").value, model: $("#llmModel").value.trim(), translate_model: $("#llmTranslate").value.trim()};
+      const url = $("#llmUrl").value.trim();
+      if (url && url !== llmStatus?.backends[payload.backend]?.api_url) payload.api_url = url;
+      if ($("#llmKey").value && $("#llmRemoveKey").checked) { notice("#llmNotice", "キーの入力と削除は同時に指定できません。"); return; }
+      if ($("#llmKey").value) payload.api_key = $("#llmKey").value;
+      if ($("#llmRemoveKey").checked) payload.remove_api_key = true;
+      try {
+        llmStatus = await (await api("/api/llm/settings", {method:"PUT", body:JSON.stringify(payload)})).json();
+        $("#llmBackend").value = payload.backend; showLlmBackend();
+        notice("#llmNotice", "設定を保存しました。", "success");
+      } catch (error) { notice("#llmNotice", error.message); }
+      finally { $("#llmKey").value = ""; }
+    });
     for (const tab of document.querySelectorAll(".tab[data-tab]")) {
       tab.addEventListener("click", () => chooseTab(tab.dataset.tab));
     }

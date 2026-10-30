@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+from contextlib import nullcontext
 
 import discord
 from jllm_plugins.llm import prompts
@@ -190,22 +191,23 @@ class ConversationService:
             check_active(active)
         return urls, documents, failures
 
-    async def compress(self, source, active, model=None):
+    async def compress(self, source, active, model=None, client=None):
         """Reduce large source in multiple passes, without silent truncation."""
+        client = client if client is not None else self.client
         for _ in range(5):
             check_active(active)
-            probe = prompts.chat_messages(self.client, SYSTEM, source)
-            if await self.client.prompt_tokens(probe) <= self.client.context_window * FITS_RATIO:
+            probe = prompts.chat_messages(client, SYSTEM, source)
+            if await client.prompt_tokens(probe) <= client.context_window * FITS_RATIO:
                 return source
             chunks = [source[i : i + 1400] for i in range(0, len(source), 1400)]
             summaries = []
             while chunks:
                 check_active(active)
                 chunk = chunks.pop(0)
-                messages = prompts.instructed_messages(self.client, SUMMARY_SYSTEM, chunk)
+                messages = prompts.instructed_messages(client, SUMMARY_SYSTEM, chunk)
                 if (
-                    await self.client.prompt_tokens(messages)
-                    > self.client.context_window * CHUNK_RATIO
+                    await client.prompt_tokens(messages)
+                    > client.context_window * CHUNK_RATIO
                 ):
                     if len(chunk) <= 1:
                         raise ValueError("資料をモデルに収められませんでした。")
@@ -213,7 +215,7 @@ class ConversationService:
                     chunks[:0] = [chunk[:cut], chunk[cut:]]
                     continue
                 summaries.append(
-                    await self.client.complete(
+                    await client.complete(
                         messages, max_tokens=384, temperature=0.1, model=model
                     )
                 )
@@ -244,112 +246,116 @@ class ConversationService:
                     + "\n".join("- " + reason for reason in failures)
                     + "\n\n本文を貼り付けるか、テキストファイルで送れば要約できます。"
                 )
-            plain = prompts.uses_plain(self.client)
-            if plain:
-                # system を送れない（atmos）。指示のない会話ログを平文で並べる方が
-                # 素直に続くので、JSON の資料ダンプではなく「名前: 本文」にする。
-                blocks = []
+            lease = getattr(self.client, "lease", None)
+            async with lease() if callable(lease) else nullcontext(self.client) as client:
+                plain = prompts.uses_plain(client)
+                if plain:
+                    # system を送れない（atmos）。指示のない会話ログを平文で並べる方が
+                    # 素直に続くので、JSON の資料ダンプではなく「名前: 本文」にする。
+                    blocks = []
 
-                if records:
-                    blocks.append(prompts.discord_log(records))
+                    if records:
+                        blocks.append(prompts.discord_log(records))
 
-                if attachment:
-                    blocks.append(attachment)
+                    if attachment:
+                        blocks.append(attachment)
 
-                for document in documents:
-                    blocks.append(document["text"])
+                    for document in documents:
+                        blocks.append(document["text"])
 
-                if failures:
-                    blocks.append("（取得できなかったページ: " + ", ".join(failures) + "）")
+                    if failures:
+                        blocks.append("（取得できなかったページ: " + ", ".join(failures) + "）")
 
-                source = "\n".join(blocks)
-            else:
-                source = json.dumps(
-                    {
-                        "取得範囲": scope,
-                        "会話ログ": records,
-                        "添付本文": attachment,
-                        "Web本文": documents,
-                        "Web取得失敗": failures,
-                    },
-                    ensure_ascii=False,
-                )
-            if len(source) + len(request) > MAX_SOURCE_CHARS:
-                raise ValueError(
-                    "本文と会話履歴は合計48,000文字までです。範囲を狭めるか、分割して依頼してください。"
-                )
-            instructions = request or (
-                "添付文書を要約してください。" if attachment else "こんにちは。"
-            )
-            without_urls = request
-            for url in urls:
-                without_urls = without_urls.replace(url, "")
-            if documents and not any(char.isalpha() for char in without_urls):
-                instructions = (
-                    "取得したWeb本文を日本語で要約してください。"
-                    "見出しと箇条書きで要点を整理してください。"
-                )
-            # The request itself may contain a long pasted document.
-            if plain:
-                combined = plain_user_content(system_prompt, source, instructions)
-                messages = prompts.chat_messages(self.client, SYSTEM, combined)
-            else:
-                combined = "参考資料：\n" + source + "\n\n最新の依頼：\n" + instructions
-                messages = prompts.chat_messages(self.client, system_prompt or SYSTEM, combined)
-            compressed = (
-                await self.client.prompt_tokens(messages)
-                > self.client.context_window * COMPRESS_RATIO
-            )
-            if compressed:
-                reduced = await self.compress(combined, active, model=model)
-                # Keep a short request verbatim; long pasted requests are included
-                # in the reduction, with an explicit final summarization task.
-                task = (
-                    instructions
-                    if len(instructions) < 1200
-                    else (
-                        "資料を要約してください。指定されている形式や重要な論点を維持してください。"
+                    source = "\n".join(blocks)
+                else:
+                    source = json.dumps(
+                        {
+                            "取得範囲": scope,
+                            "会話ログ": records,
+                            "添付本文": attachment,
+                            "Web本文": documents,
+                            "Web取得失敗": failures,
+                        },
+                        ensure_ascii=False,
                     )
+                if len(source) + len(request) > MAX_SOURCE_CHARS:
+                    raise ValueError(
+                        "本文と会話履歴は合計48,000文字までです。範囲を狭めるか、分割して依頼してください。"
+                    )
+                instructions = request or (
+                    "添付文書を要約してください。" if attachment else "こんにちは。"
                 )
-                prompts.set_user(
-                    messages, "資料の中間要約：\n" + reduced + "\n\n最新の依頼：\n" + task
+                without_urls = request
+                for url in urls:
+                    without_urls = without_urls.replace(url, "")
+                if documents and not any(char.isalpha() for char in without_urls):
+                    instructions = (
+                        "取得したWeb本文を日本語で要約してください。"
+                        "見出しと箇条書きで要点を整理してください。"
+                    )
+                # The request itself may contain a long pasted document.
+                if plain:
+                    combined = plain_user_content(system_prompt, source, instructions)
+                    messages = prompts.chat_messages(client, SYSTEM, combined)
+                else:
+                    combined = "参考資料：\n" + source + "\n\n最新の依頼：\n" + instructions
+                    messages = prompts.chat_messages(client, system_prompt or SYSTEM, combined)
+                compressed = (
+                    await client.prompt_tokens(messages)
+                    > client.context_window * COMPRESS_RATIO
                 )
-                if (
-                    await self.client.prompt_tokens(messages)
-                    > self.client.context_window * RETRY_RATIO
-                ):
+                if compressed:
+                    reduced = await self.compress(combined, active, model=model, client=client)
+                    # Keep a short request verbatim; long pasted requests are included
+                    # in the reduction, with an explicit final summarization task.
+                    task = (
+                        instructions
+                        if len(instructions) < 1200
+                        else (
+                            "資料を要約してください。指定されている形式や重要な論点を維持してください。"
+                        )
+                    )
                     prompts.set_user(
-                        messages,
-                        "資料の中間要約：\n"
-                        + await self.compress(prompts.msg_user(messages), active, model=model)
-                        + "\n\n上記に基づいて最新の依頼に答えてください。",
+                        messages, "資料の中間要約：\n" + reduced + "\n\n最新の依頼：\n" + task
                     )
-            check_active(active)
-            result = await self.client.complete(messages, model=model)
-            check_active(active)
-            if compressed:
-                result += "\n\n※ 長文部分は分割して要約したうえで回答しています。"
-            if records and re.search(
-                r"要約|まとめ|summary|summari[sz]e", instructions, re.IGNORECASE
-            ):
-                result += f"\n\n※ 会話の取得範囲：{scope}。"
-            if documents:
-                result += "\n\n**参照元**\n" + "\n".join(
-                    "- ["
-                    + discord.utils.escape_markdown(doc["title"])
-                    .replace("[", "\\[")
-                    .replace("]", "\\]")
-                    + "](<"
-                    + doc["url"].replace("(", "%28").replace(")", "%29")
-                    + ">)"
-                    + ("（本文の先頭12,000文字を取得）" if doc["truncated"] else "")
-                    for doc in documents
-                )
-            if failures:
-                result += "\n\n**取得できなかったページ**\n" + "\n".join(
-                    "- " + reason for reason in failures
-                )
-            return result
+                    if (
+                        await client.prompt_tokens(messages)
+                        > client.context_window * RETRY_RATIO
+                    ):
+                        prompts.set_user(
+                            messages,
+                            "資料の中間要約：\n"
+                            + await self.compress(
+                                prompts.msg_user(messages), active, model=model, client=client
+                            )
+                            + "\n\n上記に基づいて最新の依頼に答えてください。",
+                        )
+                check_active(active)
+                result = await client.complete(messages, model=model)
+                check_active(active)
+                if compressed:
+                    result += "\n\n※ 長文部分は分割して要約したうえで回答しています。"
+                if records and re.search(
+                    r"要約|まとめ|summary|summari[sz]e", instructions, re.IGNORECASE
+                ):
+                    result += f"\n\n※ 会話の取得範囲：{scope}。"
+                if documents:
+                    result += "\n\n**参照元**\n" + "\n".join(
+                        "- ["
+                        + discord.utils.escape_markdown(doc["title"])
+                        .replace("[", "\\[")
+                        .replace("]", "\\]")
+                        + "](<"
+                        + doc["url"].replace("(", "%28").replace(")", "%29")
+                        + ">)"
+                        + ("（本文の先頭12,000文字を取得）" if doc["truncated"] else "")
+                        for doc in documents
+                    )
+                if failures:
+                    result += "\n\n**取得できなかったページ**\n" + "\n".join(
+                        "- " + reason for reason in failures
+                    )
+                return result
 
 
 def conversation_pages(text):

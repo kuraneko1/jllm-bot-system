@@ -54,6 +54,7 @@ class SwitchCommandTests(unittest.IsolatedAsyncioTestCase):
             return FakeClient(name)
 
         cog = TranslationCog.__new__(TranslationCog)
+        cog.control_lock = asyncio.Lock()
         cog.config = TranslationCogConfig(owner_id=1)
         cog.settings = SimpleNamespace(any_enabled=lambda: False)
         cog.backend_ready = False

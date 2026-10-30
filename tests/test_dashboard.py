@@ -101,6 +101,78 @@ class ReadingDashboardTests(unittest.IsolatedAsyncioTestCase):
         await register_witness(self.client, self.dashboard, witness)
         return await login_witness(self.client, self.dashboard, witness)
 
+    async def test_llm_settings_auth_origin_redaction_and_update(self):
+        class Client:
+            def __init__(self):
+                self.calls = []
+            def admin_status(self):
+                return {"backend": "openai", "backends": {"openai": {
+                    "api_url": "https://user:secret@example.com/v1?token=secret", "model": "old",
+                    "translate_model": "translator", "key_configured": True, "api_key": "secret"}}}
+            async def admin_update(self, payload):
+                self.calls.append(payload)
+                return {"api_key": "secret"}
+        fake = Client()
+        self.dashboard.webchat_client = fake
+        self.assertEqual((await self.client.get('/api/llm/settings')).status, 401)
+        self.assertEqual((await self.client.put('/api/llm/settings')).status, 401)
+        self.assertEqual((await self.client.post('/api/llm/active')).status, 401)
+        await self.login()
+        self.dashboard._passkey_origins = [(str(self.client.make_url('/')).rstrip('/'), 'localhost')]
+        origin = self.dashboard._passkey_origins[0][0]
+        response = await self.client.get('/api/llm/settings')
+        self.assertEqual(response.status, 200)
+        self.assertNotIn('secret', await response.text())
+        self.assertEqual((await response.json())['backends']['openai']['api_url'], '')
+        fake.admin_status = lambda: {'backend': 'openai', 'backends': {'openai': {'api_url': 'http://[::1]:8080/v1', 'model': 'old', 'translate_model': 't', 'key_configured': True}}}
+        self.assertEqual((await (await self.client.get('/api/llm/settings')).json())['backends']['openai']['api_url'], 'http://[::1]:8080/v1')
+        fake.admin_status = lambda: {'backend': 'openai', 'backends': {'openai': {'api_url': 'https://example.com/secret', 'key_configured': True}}}
+        self.assertNotIn('secret', await (await self.client.get('/api/llm/settings')).text())
+        payload = {'backend': 'openai', 'api_url': 'https://example.com/v1', 'model': 'new', 'translate_model': 't', 'api_key': ''}
+        for headers in ({}, {'Origin': 'http://evil.example'}, {'Origin': origin.replace('http:', 'https:')}):
+            result = await self.client.put('/api/llm/settings', json=payload, headers=headers)
+            self.assertEqual(result.status, 403)
+        self.assertFalse(fake.calls)
+        result = await self.client.put('/api/llm/settings', json=payload, headers={'Origin': origin})
+        self.assertEqual(result.status, 200)
+        self.assertNotIn('secret', await result.text())
+        self.assertNotIn('api_key', fake.calls[-1])
+        payload['api_key'] = 'new-secret'
+        result = await self.client.put('/api/llm/settings', json=payload, headers={'Origin': origin})
+        self.assertEqual(result.status, 200)
+        self.assertEqual(fake.calls[-1]['api_key'], 'new-secret')
+        self.assertNotIn('new-secret', await result.text())
+        result = await self.client.put('/api/llm/settings', json={'backend': 'openai', 'remove_api_key': True}, headers={'Origin': origin})
+        self.assertEqual(result.status, 200)
+        self.assertEqual(fake.calls[-1], {'backend': 'openai', 'api_key': ''})
+        for bad in ({'backend': 'unknown'}, {'backend': []}, {'backend': {}}, {'backend': 'openai', 'api_url': 'https://a/?key=x'}, {'backend': 'openai', 'api_url': 'https://a/secret'}, {'backend': 'openai', 'model': 1}, {'backend': 'openai', 'remove_api_key': 'yes'}, {'backend': 'openai', 'remove_api_key': True, 'api_key': 'x'}):
+            self.assertEqual((await self.client.put('/api/llm/settings', json=bad, headers={'Origin': origin})).status, 400)
+        self.assertEqual((await self.client.post('/api/llm/active', json={'backend': 'local'})).status, 403)
+        self.assertEqual((await self.client.post('/api/llm/active', json={'backend': []}, headers={'Origin': origin})).status, 400)
+        result = await self.client.post('/api/llm/active', json={'backend': 'local'}, headers={'Origin': origin})
+        self.assertEqual(result.status, 409)
+        self.assertIn('安全性未確認', (await result.json())['error'])
+        self.assertEqual((await self.client.post('/api/llm/active', json={'backend': 'atmos'}, headers={'Origin': origin})).status, 503)
+        selected = []
+        async def select(backend):
+            selected.append(backend)
+        fake.admin_select = select
+        result = await self.client.post('/api/llm/active', json={'backend': 'atmos'}, headers={'Origin': origin})
+        self.assertEqual(result.status, 200)
+        self.assertEqual(selected, ['atmos'])
+        fake.admin_status = lambda: {'backend': 'local', 'backends': {}}
+        result = await self.client.post('/api/llm/active', json={'backend': 'openai'}, headers={'Origin': origin})
+        self.assertEqual(result.status, 409)
+        self.assertEqual(selected, ['atmos'])
+        self.assertNotIn('secret', await result.text())
+        async def fail(payload):
+            raise RuntimeError('secret exception')
+        fake.admin_update = fail
+        with self.assertNoLogs('jllm_plugins.dashboard.dashboard', level='WARNING'):
+            result = await self.client.put('/api/llm/settings', json=payload, headers={'Origin': origin})
+            self.assertEqual(result.status, 503)
+            self.assertNotIn('secret', await result.text())
+
     async def test_public_icons_are_served(self):
         icon = await self.client.get("/favicon.svg")
         self.assertEqual(icon.status, 200)
@@ -617,6 +689,27 @@ class WebchatApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(listed["assistant"]["name"], "jllm-voice")
         # Discord のセッション置き場は空のまま（混ざらない）。
         self.assertEqual(self.sessions.all_sessions(), [])
+
+    async def test_existing_webchat_uses_leased_current_model(self):
+        from contextlib import asynccontextmanager
+
+        await self.login()
+        self.chat.model = 'old-model'
+        session_id = await self.new_session()
+        saved_model = self.webchat.settings(session_id)['model']
+        leased = FakeChatClient()
+        leased.model = 'new-model'
+        @asynccontextmanager
+        async def lease():
+            yield leased
+        self.chat.lease = lease
+        response, events = await self.send(session_id, '次の発言')
+        self.assertEqual(response.status, 200)
+        self.assertEqual(events[0][1]['model'], 'new-model')
+        self.assertEqual(events[-1][1]['model'], 'new-model')
+        self.assertIsNone(leased.calls[0]['model'])
+        self.assertEqual(self.webchat.settings(session_id)['model'], saved_model)
+        self.assertEqual(len(self.webchat.history(session_id)), 2)
 
     async def test_webchat_rejects_bad_input_and_unknown_sessions(self):
         await self.login()

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import time
 from dataclasses import dataclass
@@ -725,7 +726,60 @@ class TranslationCog(commands.Cog):
 
         return False
 
+    async def admin_select(self, backend):
+        """管理画面から全体設定を変更する。読み上げモードは変更しない。
+
+        local のプロセスは進行中リクエストやチャンネル別設定からも使われる。
+        停止・起動失敗時の実状態を確認できないため、プロセス操作を伴う変更は拒否する。
+        """
+        # 編集処理と切替処理が同じキャッシュを更新するため直列化する。
+        async with self.control_lock, getattr(self.client, "_admin_lock", contextlib.nullcontext()):
+            if not isinstance(backend, str) or backend not in llm_backend.BACKENDS:
+                raise ValueError("不明なバックエンドです。")
+            with llm_backend.channel_context(None):
+                current = llm_backend.snapshot()
+                old = current["global_backend"]
+                if self.client.backend != old:
+                    raise RuntimeError("バックエンドの状態が一致しません。")
+                if backend == old:
+                    return current
+                if (old == "local" or "local" in current["channels"].values()
+                        or (backend == "local" and (self.settings.any_enabled()
+                                                    or self.manages_process))):
+                    raise RuntimeError("local が関係する切替は安全に確認できないため拒否しました。")
+                # クライアント構築の失敗は保存前に検出する。
+                if backend not in self.client._clients:
+                    self.client._clients[backend] = self.client._factory(backend)
+                new_controller = build_translation_controller(backend)
+                # 利用者ゼロで local を選ぶだけなら、外部プロセスには一切触れない。
+                if backend != "local":
+                    await new_controller.set_enabled(self.settings.any_enabled())
+                async def commit():
+                    llm_backend.set_selection(backend, current["read_mode"])
+                    try:
+                        await self.client.switch(backend)
+                    finally:
+                        # switch は backend を設定してから旧クライアントを解放する。
+                        # そこで失敗しても、保存済みの選択と controller を揃える。
+                        if self.client.backend == backend:
+                            self.controller = new_controller
+                            self.backend_ready = self.settings.any_enabled()
+                            self.last_error = ""
+                    return llm_backend.snapshot()
+
+                task = asyncio.create_task(commit())
+                try:
+                    return await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    # 呼び出し元の切断でも commit を中断せず、完了までロックを保持する。
+                    await task
+                    raise
+
     async def _llm_switch_to(self, interaction, backend, read_mode=None):
+        async with self.control_lock:
+            await self._llm_switch_to_locked(interaction, backend, read_mode)
+
+    async def _llm_switch_to_locked(self, interaction, backend, read_mode=None):
         """保存して、走っているクライアントと制御を差し替える（defer 済み前提）。"""
 
         snapshot = llm_backend.snapshot()
@@ -866,6 +920,7 @@ class TranslationCog(commands.Cog):
             app_commands.Choice(name="sarashina（クラウド・文脈128k）", value="sarashina"),
             app_commands.Choice(name="local（GPU機の llama.cpp・文脈4096）", value="local"),
             app_commands.Choice(name="atmos（z170 の gemma4-atmos-sft）", value="atmos"),
+            app_commands.Choice(name="OpenAI 互換", value="openai"),
         ],
         read_mode=[
             app_commands.Choice(name="TTSで読み上げ", value="tts"),
@@ -902,6 +957,7 @@ class TranslationCog(commands.Cog):
             app_commands.Choice(name="sarashina（クラウド・文脈128k）", value="sarashina"),
             app_commands.Choice(name="local（GPU機の llama.cpp・文脈4096）", value="local"),
             app_commands.Choice(name="atmos（z170 の gemma4-atmos-sft）", value="atmos"),
+            app_commands.Choice(name="OpenAI 互換", value="openai"),
         ]
     )
     async def llm_channel(
@@ -923,25 +979,26 @@ class TranslationCog(commands.Cog):
             )
             return
 
-        if clear:
-            llm_backend.clear_channel(target.id)
-            note = f"**{target.mention} は全体設定に戻しました**"
-        elif backend is None:
-            await interaction.response.send_message(
-                "`backend` を選ぶか、`clear` を付けてください。",
-                ephemeral=True,
-            )
-            return
-        else:
-            try:
-                snapshot = llm_backend.set_channel(target.id, backend.value)
-            except ValueError as exc:
-                await interaction.response.send_message(str(exc), ephemeral=True)
+        async with self.control_lock:
+            if clear:
+                llm_backend.clear_channel(target.id)
+                note = f"**{target.mention} は全体設定に戻しました**"
+            elif backend is None:
+                await interaction.response.send_message(
+                    "`backend` を選ぶか、`clear` を付けてください。",
+                    ephemeral=True,
+                )
                 return
-            note = (
-                f"**{target.mention} は {snapshot['display']}**"
-                f"（`{snapshot['backend']}`）にしました"
-            )
+            else:
+                try:
+                    snapshot = llm_backend.set_channel(target.id, backend.value)
+                except ValueError as exc:
+                    await interaction.response.send_message(str(exc), ephemeral=True)
+                    return
+                note = (
+                    f"**{target.mention} は {snapshot['display']}**"
+                    f"（`{snapshot['backend']}`）にしました"
+                )
 
         lines = [
             note,
@@ -1094,7 +1151,7 @@ class TranslationCog(commands.Cog):
         )
 
     def talk_model(self) -> str:
-        return self.config.talk_model
+        return getattr(self.client, "model", "") or self.config.talk_model
 
     def talk_system_prompt(self) -> str:
         """セッションへ保存するシステムプロンプト（ファイル優先）。"""
@@ -1368,7 +1425,6 @@ class TranslationCog(commands.Cog):
                             message, text, self.bot.user.id, active,
                             history=history,
                             system_prompt=session_settings.get("system_prompt") or None,
-                            model=session_settings.get("model") or None,
                         )
 
                     sent_ids, sent_at = [], None

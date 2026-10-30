@@ -38,6 +38,7 @@ BACKENDS = (
     "sarashina",
     "local",
     "atmos",
+    "openai",
 )
 
 READ_MODES = ("tts", "wav")
@@ -65,6 +66,7 @@ INFO = {
         "文脈4096。翻訳対象があるときだけ起動し、無くなると停止して VRAM を返す",
         manages_process=True,
     ),
+    "openai": BackendInfo("OpenAI 互換", "OpenAI 互換 Chat Completions"),
     "atmos": BackendInfo(
         "gemma4-atmos-sft（z170）",
         "文脈8192・同時4本・約26トークン/秒。#雑談vc の会話で調整した LoRA",

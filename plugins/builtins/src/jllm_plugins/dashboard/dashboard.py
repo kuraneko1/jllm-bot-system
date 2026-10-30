@@ -6,6 +6,7 @@ import logging
 import math
 import secrets
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
@@ -177,6 +178,9 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
                 web.get("/api/voice-debug", self._voice_debug),
                 web.get("/api/duck-curve", self._protect(self._get_duck_curve)),
                 web.post("/api/duck-curve", self._protect(self._set_duck_curve)),
+                web.get("/api/llm/settings", self._protect(self._llm_status)),
+                web.put("/api/llm/settings", self._protect(self._llm_update)),
+                web.post("/api/llm/active", self._protect(self._llm_select)),
                 web.get("/api/tts/backends", self._protect(self._tts_status)),
                 web.post("/api/tts/active", self._protect(self._set_tts_active)),
                 web.post("/api/tts/check", self._protect(self._check_tts)),
@@ -408,6 +412,96 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
 
         return guarded
 
+    def _llm_public_status(self):
+        status = self.webchat_client.admin_status()
+        backends = {}
+        for name in ("sarashina", "local", "atmos", "openai"):
+            data = status["backends"].get(name)
+            if not isinstance(data, dict):
+                continue
+            url = urlsplit(data.get("api_url") or "")
+            # Unknown URL paths, credentials and queries may contain secrets.
+            safe_url = ""
+            if (url.scheme in {"http", "https"} and url.hostname and not url.username
+                    and not url.password and not url.query and not url.fragment
+                    and url.path in {"", "/", "/v1", "/v1/"}):
+                host = f"[{url.hostname}]" if ":" in url.hostname else url.hostname
+                safe_url = f"{url.scheme}://{host}"
+                if url.port:
+                    safe_url += f":{url.port}"
+                safe_url += url.path
+            backends[name] = {"api_url": safe_url, "model": data.get("model", ""),
+                              "translate_model": data.get("translate_model", ""),
+                              "key_configured": bool(data.get("key_configured"))}
+        return {"backend": status["backend"], "backends": backends}
+
+    async def _llm_status(self, request):
+        try:
+            return web.json_response(self._llm_public_status())
+        except Exception:
+            return self._json_error("LLM設定を取得できませんでした。", 503)
+
+    def _llm_origin_ok(self, request):
+        origin = request.headers.get("Origin", "")
+        return origin in {value for value, _ in self._passkey_origins} and urlsplit(origin).netloc.lower() == request.host.lower()
+
+    async def _llm_select(self, request):
+        if not self._llm_origin_ok(request):
+            return self._json_error("不正なアクセス元です。", 403)
+        try:
+            data = await self._json_body(request)
+        except web.HTTPException:
+            return self._json_error("JSONオブジェクトが必要です。", 400)
+        if (set(data) != {"backend"} or not isinstance(data.get("backend"), str)
+                or data["backend"] not in {"sarashina", "local", "atmos", "openai"}):
+            return self._json_error("バックエンドを確認してください。", 400)
+        try:
+            current = self.webchat_client.admin_status()["backend"]
+            if current != data["backend"] and "local" in (current, data["backend"]):
+                return self._json_error("localとの切り替えは安全性未確認のため、管理画面では対応していません。", 409)
+            await self.webchat_client.admin_select(data["backend"])
+            return web.json_response(self._llm_public_status())
+        except Exception:
+            return self._json_error("LLMの切り替えができませんでした。", 503)
+
+    async def _llm_update(self, request):
+        if not self._llm_origin_ok(request):
+            return self._json_error("不正なアクセス元です。", 403)
+        try:
+            data = await self._json_body(request)
+        except web.HTTPException:
+            return self._json_error("JSONオブジェクトが必要です。", 400)
+        allowed = {"backend", "api_url", "model", "translate_model", "api_key", "remove_api_key"}
+        if (set(data) - allowed or not isinstance(data.get("backend"), str)
+                or data["backend"] not in {"sarashina", "local", "atmos", "openai"}
+                or not isinstance(data.get("remove_api_key", False), bool)):
+            return self._json_error("設定項目を確認してください。", 400)
+        if any(not isinstance(value, str) or len(value) > 2048 or any(ord(c) < 32 for c in value)
+               for key, value in data.items() if key != "remove_api_key"):
+            return self._json_error("設定値を確認してください。", 400)
+        if data.get("remove_api_key") and data.get("api_key"):
+            return self._json_error("キーの入力と削除は同時に指定できません。", 400)
+        if "api_url" in data:
+            try:
+                url = urlsplit(data["api_url"])
+                if (url.scheme not in {"http", "https"} or not url.hostname or url.username
+                        or url.password or url.query or url.fragment or url.port == 0
+                        or url.path not in {"", "/", "/v1", "/v1/"}
+                        or any(c.isspace() for c in data["api_url"])):
+                    raise ValueError
+            except ValueError:
+                return self._json_error("API URLを確認してください。", 400)
+        remove_key = data.pop("remove_api_key", False)
+        if remove_key:
+            data["api_key"] = ""
+        elif not data.get("api_key"):
+            data.pop("api_key", None)
+        try:
+            await self.webchat_client.admin_update(data)
+            return web.json_response(self._llm_public_status())
+        except Exception:
+            return self._json_error("LLM設定を更新できませんでした。", 503)
+
     async def _index(self, request: web.Request) -> web.StreamResponse:
         page = Path(__file__).with_name("dashboard.html")
         return web.FileResponse(page, headers={"Cache-Control": "no-store"})
@@ -470,7 +564,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         """新しい会話を作る（管理者のみ）。"""
         session_id = await asyncio.to_thread(
             self.webchat.create_session, "web", "web", "web", "Web",
-            self.config.talk_model, WEBCHAT_SYSTEM,
+            getattr(self.webchat_client, "model", None) or self.config.talk_model, WEBCHAT_SYSTEM,
         )
         return web.json_response({"session_id": session_id})
 
@@ -498,10 +592,10 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         settings = self.webchat.settings(session_id)
         return settings.get("system_prompt") or WEBCHAT_SYSTEM
 
-    def _webchat_messages(self, session_id):
+    def _webchat_messages(self, session_id, client=None):
         """会話の履歴をモデル用の messages にする。"""
         prompt = self._webchat_prompt(session_id)
-        plain = prompts.uses_plain(self.webchat_client)
+        plain = prompts.uses_plain(client or self.webchat_client)
         messages = [] if plain else [{"role": "system", "content": prompt}]
 
         for record in self.webchat.history(session_id, limit=60):
@@ -547,37 +641,37 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         if client is None:
             return self._json_error("会話モデルが設定されていません。", 503)
 
-        settings = await asyncio.to_thread(self.webchat.settings, session_id)
-        model = settings.get("model") or self.config.talk_model
         await asyncio.to_thread(self.webchat.append_user, session_id, "web", "Web", text)
-        messages = await asyncio.to_thread(self._webchat_messages, session_id)
+        async with (client.lease() if hasattr(client, "lease") else nullcontext(client)) as client:
+            model = getattr(client, "model", None) or self.config.talk_model
+            messages = await asyncio.to_thread(self._webchat_messages, session_id, client)
 
-        response = web.StreamResponse(
-            status=200,
-            headers={
-                "Content-Type": "text/event-stream; charset=utf-8",
-                "Cache-Control": "no-store",
-                "X-Accel-Buffering": "no",
-            },
-        )
-        await response.prepare(request)
-
-        async def send(event, data):
-            await response.write(
-                f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
+            response = web.StreamResponse(
+                status=200,
+                headers={
+                    "Content-Type": "text/event-stream; charset=utf-8",
+                    "Cache-Control": "no-store",
+                    "X-Accel-Buffering": "no",
+                },
             )
+            await response.prepare(request)
 
-        await send("start", {"session_id": session_id, "model": model})
-        chunks, started = [], time.monotonic()
+            async def send(event, data):
+                await response.write(
+                    f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
+                )
 
-        try:
-            async for delta in client.stream(messages, max_tokens=1200, model=model):
-                chunks.append(delta)
-                await send("delta", {"text": delta})
-        except Exception:
-            logger.exception("Webチャットの生成に失敗")
-            await send("error", {"message": "生成に失敗しました。少し待って試してください。"})
-            return response
+            await send("start", {"session_id": session_id, "model": model})
+            chunks, started = [], time.monotonic()
+
+            try:
+                async for delta in client.stream(messages, max_tokens=1200, model=None):
+                    chunks.append(delta)
+                    await send("delta", {"text": delta})
+            except Exception:
+                logger.warning("Webチャットの生成に失敗")
+                await send("error", {"message": "生成に失敗しました。少し待って試してください。"})
+                return response
 
         answer = "".join(chunks).strip()
 

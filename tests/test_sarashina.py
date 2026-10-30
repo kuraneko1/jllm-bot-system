@@ -79,6 +79,26 @@ class SarashinaClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.client.complete([{"role": "user", "content": "hi"}], max_tokens=9999), "こんにちは")
         self.assertEqual(self.requests[0][1]["max_completion_tokens"], 8000)
 
+    async def test_thinking_model_uses_api_default_output_limit(self):
+        thinking = "sarashina3.2-mini-thinking"
+        messages = [{"role": "user", "content": "hi"}]
+        await self.client.complete(messages, max_tokens=64, model=thinking)
+        self.assertNotIn("max_completion_tokens", self.requests[-1][1])
+        self.assertEqual(self.requests[-1][1]["model"], thinking)
+
+        _ = [chunk async for chunk in self.client.stream(messages, max_tokens=64, model=thinking)]
+        self.assertNotIn("max_completion_tokens", self.requests[-1][1])
+        self.assertEqual(self.requests[-1][1]["model"], thinking)
+
+        self.client.translate_model = thinking
+        await self.client.translate("Hello")
+        self.assertNotIn("max_completion_tokens", self.requests[-1][1])
+        self.assertEqual(self.requests[-1][1]["model"], thinking)
+
+    async def test_non_thinking_stream_keeps_output_limit(self):
+        _ = [chunk async for chunk in self.client.stream([{"role": "user", "content": "hi"}], max_tokens=64)]
+        self.assertEqual(self.requests[-1][1]["max_completion_tokens"], 64)
+
     async def test_retries_rate_limit_then_succeeds(self):
         self.responses.append((429, {"error": "rate limited"}))
         self.assertEqual(await self.client.translate("Hello"), "こんにちは")
