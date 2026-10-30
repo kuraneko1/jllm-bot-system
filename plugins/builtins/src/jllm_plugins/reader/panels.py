@@ -356,6 +356,11 @@ class ForceVoiceView(discord.ui.View):
     def _member_label(self, user_id: int) -> str:
         return f"<@{user_id}>"
 
+    def _length_of(self, name: str) -> int:
+        """その声の現在の読み上げ文字数（未設定は既定文字数）。"""
+
+        return self.cog.length_for_name(name)
+
     def embed(self) -> discord.Embed:
         embed = discord.Embed(
             title="🔒 強制ボイス設定（オーナーのみ）",
@@ -368,6 +373,7 @@ class ForceVoiceView(discord.ui.View):
         prefix = f"{self.guild_id}:"
         lines = [
             f"{self._member_label(int(key.split(':', 1)[1]))}: {name}"
+            f"（先頭 {self._length_of(name)} 文字）"
             for key, name in sorted(self.cog.forced_voices.items())
             if key.startswith(prefix)
         ]
@@ -382,10 +388,23 @@ class ForceVoiceView(discord.ui.View):
                 if self.pending_voice is not None
                 else "（声を未選択）"
             )
+            note = ""
+            if self.pending_voice not in (None, "release"):
+                pending_name = next(
+                    (
+                        name
+                        for speaker_id, name in self.speakers
+                        if str(speaker_id) == self.pending_voice
+                    ),
+                    self.pending_voice,
+                )
+                note = (
+                    f"\nこの声は先頭 {self._length_of(pending_name)} 文字まで読み上げます"
+                )
             embed.add_field(
                 name="選択中（未確定）",
                 value=(
-                    f"{self._member_label(self.pending_user)} → {voice}\n"
+                    f"{self._member_label(self.pending_user)} → {voice}{note}\n"
                     "下の **✅ 強制設定** で確定（確定後このパネルは閉じます）"
                 ),
                 inline=False,

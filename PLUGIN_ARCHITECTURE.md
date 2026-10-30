@@ -509,7 +509,7 @@ plugins:
 | `sounds.json` / `sounds/` / 承認待ち仮音声 | `dictionary.sound` |
 | `media.json` / `media/` | `dictionary.media` |
 | `user_voices.json` / `forced_voices.json` | `voice.settings` |
-| `voice_volumes.json` / `voice_speeds.json` / `disabled_voices.json` | `voice.settings` |
+| `voice_volumes.json` / `voice_speeds.json` / `voice_lengths.json` / `disabled_voices.json` | `voice.settings` |
 | `user_restrictions.json` | `policy.restrictions` |
 | `toggles.json` | `policy.runtime-toggles` |
 | `translation.json` | `feature.translation` |

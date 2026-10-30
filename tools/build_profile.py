@@ -232,6 +232,7 @@ def build(env, backends, data_dir):
         "config": {
             "speeds_path": path("voice_speeds.json"),
             "volumes_path": path("voice_volumes.json"),
+            "lengths_path": path("voice_lengths.json"),
             "user_voices_path": path("user_voices.json"),
             "forced_voices_path": path("forced_voices.json"),
             "announcement_history_path": path("vc_announcements.json"),

@@ -853,6 +853,11 @@ class TranslationCog(commands.Cog):
 
         if snapshot["read_mode"] == "wav":
             lines.append("辞書に登録した wav だけ鳴らし、TTS は使いません（入室案内もしません）。")
+        elif snapshot["read_mode"] == "full":
+            lines.append(
+                "ユーザー投稿もBotの返答も、辞書wav＋TTSで読みます"
+                "（Botの返答もユーザーと同じ読み方）。"
+            )
         elif snapshot["read_mode"] == "none":
             lines.append("読み上げを止めています。/join していても何も鳴らしません。")
 
@@ -930,6 +935,9 @@ class TranslationCog(commands.Cog):
         ],
         read_mode=[
             app_commands.Choice(name="TTSで読み上げ", value="tts"),
+            app_commands.Choice(
+                name="TTS+辞書wav（Botの返答もユーザーと同じ）", value="full"
+            ),
             app_commands.Choice(name="辞書wavのみ（TTSしない）", value="wav"),
             app_commands.Choice(name="読み上げなし", value="none"),
         ],
@@ -1018,10 +1026,15 @@ class TranslationCog(commands.Cog):
         name="read",
         description="読み上げモードだけを変えます（モデルはそのまま）",
     )
-    @app_commands.describe(mode="TTSで読み上げる / 辞書wavだけ鳴らす / 何も鳴らさない")
+    @app_commands.describe(
+        mode="TTSで読み上げる / Botの返答も辞書wav+TTS / 辞書wavだけ鳴らす / 何も鳴らさない"
+    )
     @app_commands.choices(
         mode=[
             app_commands.Choice(name="TTSで読み上げ", value="tts"),
+            app_commands.Choice(
+                name="TTS+辞書wav（Botの返答もユーザーと同じ）", value="full"
+            ),
             app_commands.Choice(name="辞書wavのみ（TTSしない）", value="wav"),
             app_commands.Choice(name="読み上げなし", value="none"),
         ]

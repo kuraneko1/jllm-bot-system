@@ -60,6 +60,7 @@ class VoiceSettingsCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         reader, settings = self.make_reader()
         self.assertIs(reader.voice_speeds, settings.speeds)
         self.assertIs(reader.voice_volumes, settings.volumes)
+        self.assertIs(reader.voice_lengths, settings.lengths)
         dashboard = ReadingDashboard(
             self.readings, self.tts, reader=reader, password_file=str(self.root / "auth.json"),
             config=DashboardConfig(webchat_dir=str(self.root / "webchat")),
@@ -78,6 +79,7 @@ class VoiceSettingsCompatibilityTests(unittest.IsolatedAsyncioTestCase):
             dashboard.reader = restarted
             self.assertIs(restarted.voice_speeds, restarted_settings.speeds)
             self.assertIs(restarted.voice_volumes, restarted_settings.volumes)
+            self.assertIs(restarted.voice_lengths, restarted_settings.lengths)
             response = await client.get("/api/voice-library")
             self.assertEqual(response.status, 200)
             library = await response.json()

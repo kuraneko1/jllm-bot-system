@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from .join_voice import JoinVoiceCache
+from .lengths import VoiceLengths
 from .speeds import VoiceSpeeds
 from .volumes import VoiceVolumes
 
@@ -52,6 +53,9 @@ class VoiceSettings:
         )
         self.volumes = VoiceVolumes(
             storage.legacy_path(config.get("volumes_path", "voice_volumes.json"))
+        )
+        self.lengths = VoiceLengths(
+            storage.legacy_path(config.get("lengths_path", "voice_lengths.json"))
         )
         self.user_voices = JsonMap(
             storage.legacy_path(config.get("user_voices_path", "user_voices.json"))

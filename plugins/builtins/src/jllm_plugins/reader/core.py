@@ -36,6 +36,7 @@ from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse
 from jllm_plugins.tts_lifecycle.service import switch_message
 from jllm_plugins.tts_router.router import TTSRouter
 from jllm_plugins.voice_settings.join_voice import JoinVoiceCache
+from jllm_plugins.voice_settings.lengths import VoiceLengths, check_length
 from jllm_plugins.vram_control.service import NoVramController, VramControlError, vram_summary
 
 from .media import HtmlApprovalView, MediaApprovalView, SoundApprovalView
@@ -198,6 +199,7 @@ class ReaderCog(commands.Cog):
         self.media_dir = Path("media")
         self.html_dir = Path("html")
         self.toggles = {"img": True, "wav": True}
+        self.voice_lengths = VoiceLengths()
         return self
 
     def __init__(
@@ -225,6 +227,7 @@ class ReaderCog(commands.Cog):
         self.settings = settings
         self.voice_speeds = settings.speeds
         self.voice_volumes = settings.volumes
+        self.voice_lengths = getattr(settings, "lengths", None) or VoiceLengths()
         self.dictionary = dictionary
         self.readings = readings
         self.restrictions = restrictions
@@ -363,19 +366,21 @@ class ReaderCog(commands.Cog):
         return self.voice_entries
 
     def _read_mode(self):
-        """読み上げモード（``tts`` / ``wav`` / ``none``）。
+        """読み上げモード（``tts`` / ``full`` / ``wav`` / ``none``）。
 
-        設定で ``wav`` か ``none`` を明示していればそれを優先し、
-        それ以外は LLM 側の全体設定（``/llm read``）に従う。
+        設定で ``full`` / ``wav`` / ``none`` を明示していればそれを優先し、
+        それ以外は LLM 側の全体設定（``/llm read``）に従う。``full`` は Bot 自身の
+        返答もユーザー投稿と同じく「辞書wav＋TTS」で読む。
         """
 
-        if self.config.read_mode in ("wav", "none"):
+        if self.config.read_mode in ("full", "wav", "none"):
             return self.config.read_mode
         try:
             mode = llm_backend.active_read_mode()
         except Exception:
             return self.config.read_mode
-        return mode if mode in ("tts", "wav", "none") else self.config.read_mode
+        valid = ("tts", "full", "wav", "none")
+        return mode if mode in valid else self.config.read_mode
 
     def _save_voice_history(self):
         if "settings" in self.__dict__:
@@ -449,6 +454,30 @@ class ReaderCog(commands.Cog):
             return self.settings.volumes.get(str(name))
         return self.voice_volumes.get(str(name))
 
+    def length_for_name(self, name) -> int:
+        """話者名から読み上げ文字数。未設定は config.max_message_length。
+
+        パネル表示のように await できない場所から使う同期版。
+        """
+
+        try:
+            value = self.voice_lengths.get(str(name))
+        except Exception:
+            value = None
+        if not isinstance(value, int) or isinstance(value, bool):
+            return self.config.max_message_length
+        return value
+
+    async def tts_length_for(self, speaker) -> int:
+        """話者ごとの読み上げ文字数（先頭何文字まで読むか）。
+
+        速度・音量と同じく ``_voice_name`` で名前を解決する。未設定なら
+        ``config.max_message_length``。Bot の声も 1 つの話者として扱う。
+        """
+
+        name = await self._voice_name(speaker)
+        return self.length_for_name(name)
+
     def _mytalk_embed(self, guild_id: int, user_id: int, speakers):
         key = self._user_key(guild_id, user_id)
         player = self.players.get(guild_id)
@@ -465,6 +494,14 @@ class ReaderCog(commands.Cog):
         embed.add_field(
             name="声（話者）",
             value=voice_name or f"サーバー既定（{default_name}）",
+            inline=False,
+        )
+        embed.add_field(
+            name="読み上げ文字数",
+            value=(
+                f"先頭 {self.length_for_name(voice_name or default_name)} 文字まで"
+                "（オーナーが /readlength で変更できます）"
+            ),
             inline=False,
         )
         if player is None:
@@ -559,6 +596,75 @@ class ReaderCog(commands.Cog):
             wait=True,
         )
         view.message = message
+
+    async def _speaker_name_choices(self, interaction: discord.Interaction, current: str):
+        """``/readlength`` の話者名候補（``_flatten_speakers`` の名前）。"""
+
+        lowered = (current or "").casefold().strip()
+        names = [name for _, name in await self._flatten_speakers()]
+        if lowered:
+            names = [name for name in names if lowered in name.casefold()]
+        return [
+            app_commands.Choice(name=name[:100], value=name[:100]) for name in names[:25]
+        ]
+
+    @app_commands.command(
+        name="readlength",
+        description="話者ごとに「先頭何文字まで読むか」を設定します（オーナーのみ）",
+    )
+    @app_commands.describe(
+        speaker="話者（声）の名前。省略するとBotの声",
+        length="先頭何文字まで読み上げるか（1〜1900）",
+        clear="この話者の設定を消して既定（max_message_length）に戻す",
+    )
+    @app_commands.autocomplete(speaker=_speaker_name_choices)
+    @app_commands.guild_only()
+    async def readlength(
+        self,
+        interaction: discord.Interaction,
+        speaker: str | None = None,
+        length: int | None = None,
+        clear: bool = False,
+    ):
+        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+            await interaction.response.send_message(
+                "このコマンドはオーナーだけが使えます。", ephemeral=True
+            )
+            return
+        guild = interaction.guild
+        name = (speaker or "").strip()
+        if not name:
+            # 話者名を省いたときは Bot の声（いま使っている声）を対象にする。
+            player = self.players.get(guild.id) if guild is not None else None
+            speaker_id = (
+                player.speaker_id if player is not None else self.config.default_speaker
+            )
+            name = str(await self._voice_name(speaker_id))
+        if clear:
+            removed = self.voice_lengths.remove(name)
+            default = self.config.max_message_length
+            message = (
+                f"{name} の設定を消して既定（先頭 {default} 文字）に戻しました。"
+                if removed
+                else f"{name} には文字数設定がありません（既定は先頭 {default} 文字）。"
+            )
+            await interaction.response.send_message(message, ephemeral=True)
+            return
+        if length is None:
+            await interaction.response.send_message(
+                f"{name} は先頭 {self.length_for_name(name)} 文字まで読み上げます。",
+                ephemeral=True,
+            )
+            return
+        try:
+            value = check_length(length)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        self.voice_lengths.set(name, value)
+        await interaction.response.send_message(
+            f"{name} は先頭 {value} 文字まで読み上げます。", ephemeral=True
+        )
 
     @app_commands.command(
         name="resettalk", description="このサーバーの全員の話者設定をリセットします"
@@ -711,15 +817,17 @@ class ReaderCog(commands.Cog):
         await interaction.response.send_message(message, ephemeral=True)
 
     async def speak_own_response(self, sent, text: str) -> None:
-        """会話の応答（Bot 自身の投稿本文）を TTS で読む。
+        """会話の応答（Bot 自身の投稿本文）を読む。
 
         読むのは ``/join`` した読み上げ対象チャンネルだけで、読み上げモードが
-        ``tts`` のときだけ。**会話の応答を投稿した側から明示的に呼ぶ**。
-        翻訳結果やコマンド応答を二重に読まないよう、投稿を監視して拾うのではなく
-        この入口だけを使う。
+        ``tts`` か ``full`` のときだけ。``full`` ではユーザー投稿と同じく本文を
+        辞書で分割し、登録 wav は鳴らし、残りは TTS で読む。**会話の応答を
+        投稿した側から明示的に呼ぶ**。翻訳結果やコマンド応答を二重に読まないよう、
+        投稿を監視して拾うのではなく、この入口だけを使う。
         """
 
-        if self._read_mode() != "tts":
+        mode = self._read_mode()
+        if mode not in ("tts", "full"):
             return
         guild = getattr(sent, "guild", None)
         channel = getattr(sent, "channel", None)
@@ -732,8 +840,9 @@ class ReaderCog(commands.Cog):
             or not player.voice_client.is_connected()
         ):
             return
-        # 応答は Discord の 1 ページ（最大 1900 字）単位で来るので、そのまま読む。
-        text = prepare_text(text, 1900)
+        # 文字数は Bot の声（player.speaker_id）の設定。未設定なら config の既定。
+        max_length = await self.tts_length_for(player.speaker_id)
+        text = prepare_text(text, max_length)
         text = filter_emojis(text, player.allow_nonverbal_emojis)
         if not has_readable_text(text):
             return
@@ -741,14 +850,55 @@ class ReaderCog(commands.Cog):
         if not text.strip():
             return
         bot_id = getattr(getattr(self.bot, "user", None), "id", 0)
-        # 話者・効果・速度は既定のまま読む。
-        player.enqueue(
-            text,
-            player.speaker_id,
-            self.config.default_speed,
-            str(getattr(sent, "id", "") or ""),
-            self._user_key(guild.id, bot_id),
-        )
+        post_id = str(getattr(sent, "id", "") or "")
+        author_key = self._user_key(guild.id, bot_id)
+        if mode != "full":
+            # tts では従来どおり本文をまとめて読む（話者・速度は既定）。
+            player.enqueue(
+                text,
+                player.speaker_id,
+                self.config.default_speed,
+                post_id,
+                author_key,
+            )
+            return
+        # full: Bot の応答もユーザー投稿と同じ読み方にする。
+        voice_speed = await self.tts_speed_for(player.speaker_id)
+        base_speed = voice_speed if voice_speed is not None else self.config.default_speed
+        gain = await self.tts_gain_for(player.speaker_id)
+        pieces = _parse_pieces(text, base_speed)
+        for chunk, chunk_speed, chunk_effects in pieces:
+            for segment in self.dictionary.split(chunk):
+                if segment.kind == "sound":
+                    if self.toggles["wav"]:
+                        player.enqueue_sound(
+                            segment.value,
+                            chunk_speed,
+                            self.dictionary.volume_of_file(Path(segment.value).name),
+                            post_id,
+                            author_key,
+                            effects=chunk_effects,
+                        )
+                    elif has_readable_text(segment.text):
+                        player.enqueue(
+                            segment.text,
+                            player.speaker_id,
+                            chunk_speed,
+                            post_id,
+                            author_key,
+                            volume=gain,
+                            effects=chunk_effects,
+                        )
+                elif has_readable_text(segment.value):
+                    player.enqueue(
+                        segment.value,
+                        player.speaker_id,
+                        chunk_speed,
+                        post_id,
+                        author_key,
+                        volume=gain,
+                        effects=chunk_effects,
+                    )
 
     def _joined_channel(self, message) -> bool:
         """いま /join している読み上げ対象チャンネルかどうか。"""
@@ -825,6 +975,14 @@ class ReaderCog(commands.Cog):
         read_text = strip_call_suffix(
             tts_message_text(message), self.config.talk_call_suffix
         )
+        # 文字数は「その投稿の話者」の設定を使う（未設定なら config の既定）。
+        speaker = self.effective_voice_for(message.guild.id, message.author.id)
+        speaker_key = speaker if speaker is not None else player.speaker_id
+        max_length = (
+            await self.tts_length_for(speaker_key)
+            if mode in ("tts", "full")
+            else self.config.max_message_length
+        )
         command = parse_commands(read_text)
         post_id = str(message.id)
         author_key = self._user_key(message.guild.id, message.author.id)
@@ -833,7 +991,7 @@ class ReaderCog(commands.Cog):
         if command is not None:
             base, trailing_speed, stop_requested = command
             read_text = base
-            if not has_readable_text(prepare_text(base, self.config.max_message_length)):
+            if not has_readable_text(prepare_text(base, max_length)):
                 return
             pieces = _parse_pieces(base, self.config.default_speed)
             pieces = _apply_trailing_speed(pieces, trailing_speed)
@@ -861,15 +1019,13 @@ class ReaderCog(commands.Cog):
                 return
         if message.author.id in player.skip_users:
             return
-        text = prepare_text(read_text, self.config.max_message_length)
+        text = prepare_text(read_text, max_length)
         text = filter_emojis(text, player.allow_nonverbal_emojis)
         if not has_readable_text(text):
             return
         text = self.readings.apply(text)
         if not text.strip():
             return
-        speaker = self.effective_voice_for(message.guild.id, message.author.id)
-        speaker_key = speaker if speaker is not None else player.speaker_id
         voice_speed = await self.tts_speed_for(speaker_key)
         base_speed = voice_speed if voice_speed is not None else self.config.default_speed
         pieces = _apply_trailing_speed(_parse_pieces(text, base_speed), trailing_speed)
@@ -880,7 +1036,7 @@ class ReaderCog(commands.Cog):
             await self._react_skip(message)
         gain = await self.tts_gain_for(speaker_key)
         wav_blocked = self._restricted(message, "wav")
-        speak = mode == "tts"
+        speak = mode in ("tts", "full")
         for chunk, chunk_speed, chunk_effects in pieces:
             for segment in self.dictionary.split(chunk):
                 if segment.kind == "sound":
@@ -932,7 +1088,7 @@ class ReaderCog(commands.Cog):
             or after_id != player.voice_client.channel.id
             or player.closed
             or not player.voice_client.is_connected()
-            or self._read_mode() != "tts"
+            or self._read_mode() not in ("tts", "full")
         ):
             return
         now = time.time()
@@ -1085,6 +1241,7 @@ class ReaderCog(commands.Cog):
             "- /leave — 読み上げ停止・VC退出",
             "- /mytalk — 自分の声・ミュートを選択し、**✅ 設定する**で確定",
             "- /forcevoice — メンバーの声を強制変更（オーナーのみ。本人設定より優先）",
+            "- /readlength — 話者ごとの「先頭何文字まで読むか」（オーナーのみ）",
             "- /emoji enabled: — 👅💋の読み上げを切り替え（既定は無効）",
             "- 投稿の先頭に ;・: — **その投稿だけ**読み上げない",
             "- s だけ送信 — 再生中の読み上げを停止",

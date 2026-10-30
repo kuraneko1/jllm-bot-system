@@ -42,7 +42,7 @@ BACKENDS = (
     "openai",
 )
 
-READ_MODES = ("tts", "wav", "none")
+READ_MODES = ("tts", "full", "wav", "none")
 
 
 @dataclass(frozen=True)
@@ -122,6 +122,8 @@ def display_name(backend: str) -> str:
 def read_mode_label(mode: str) -> str:
     """読み上げモードの表示名。"""
 
+    if mode == "full":
+        return "TTS+辞書wav（Botの返答もユーザーと同じ）"
     if mode == "wav":
         return "辞書wavのみ（TTSなし）"
     if mode == "none":

@@ -32,7 +32,7 @@
 | `DUCK_ENABLED`、`DUCK_*` | `feature.reader.duck_enabled` と `speech.playback` | 曲線ファイルは `web.dashboard.config.duck_curve_path` も合わせる。 |
 | `VC_ANNOUNCEMENT_ENABLED`、`VC_ANNOUNCEMENT_COOLDOWN_SECONDS` | `feature.reader` の同名項目 | |
 | `VC_ANNOUNCEMENT_VOICE`、`VC_ANNOUNCEMENT_CACHE_DIR`、`VC_ANNOUNCEMENT_CACHE_LIMIT`、`VC_ANNOUNCEMENT_HISTORY_PATH` | `voice.settings` の `announcement_*` | 実使用は voice.settings 側。Reader 側にも同名項目があるが通常は voice.settings を設定する。 |
-| `VOICE_SPEEDS_PATH`、`VOICE_VOLUMES_PATH` | `voice.settings.speeds_path`、`volumes_path` | 保存形式は互換。 |
+| `VOICE_SPEEDS_PATH`、`VOICE_VOLUMES_PATH`、`VOICE_LENGTHS_PATH` | `voice.settings.speeds_path`、`volumes_path`、`lengths_path` | 保存形式は互換。 |
 | `USER_VOICES_PATH`、`FORCED_VOICES_PATH` | `voice.settings.user_voices_path`、`forced_voices_path` | 値は文字列へ正規化して読む（旧と同じ）。 |
 | `MYTALK_HIDDEN_VOICES` | `feature.reader.mytalk_hidden_voices` | 未指定時は旧既定の2名。`[]` で非表示なし。 |
 | `BOOKMARK_REACTION`、`BOOKMARK_NOTIFY` など | `feature.bookmarks`、`feature.reader` | |
