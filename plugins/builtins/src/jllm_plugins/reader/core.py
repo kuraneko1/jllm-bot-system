@@ -200,6 +200,7 @@ class ReaderCog(commands.Cog):
         self.html_dir = Path("html")
         self.toggles = {"img": True, "wav": True}
         self.voice_lengths = VoiceLengths()
+        self.bot_voice = None
         return self
 
     def __init__(
@@ -228,6 +229,7 @@ class ReaderCog(commands.Cog):
         self.voice_speeds = settings.speeds
         self.voice_volumes = settings.volumes
         self.voice_lengths = getattr(settings, "lengths", None) or VoiceLengths()
+        self.bot_voice = getattr(settings, "bot_voice", None)
         self.dictionary = dictionary
         self.readings = readings
         self.restrictions = restrictions
@@ -478,6 +480,23 @@ class ReaderCog(commands.Cog):
         name = await self._voice_name(speaker)
         return self.length_for_name(name)
 
+    def bot_voice_name(self) -> str:
+        """Bot 自身の返答を読む声の名前（未設定なら空文字）。"""
+
+        store = getattr(self, "bot_voice", None)
+        value = store.get("bot") if store is not None else None
+        return str(value).strip() if value else ""
+
+    def bot_speaker(self, player=None):
+        """Bot の返答を読む話者。設定が無ければサーバー既定（player.speaker_id）。"""
+
+        name = self.bot_voice_name()
+        if name:
+            return name
+        if player is not None:
+            return player.speaker_id
+        return self.config.default_speaker
+
     def _mytalk_embed(self, guild_id: int, user_id: int, speakers):
         key = self._user_key(guild_id, user_id)
         player = self.players.get(guild_id)
@@ -634,12 +653,11 @@ class ReaderCog(commands.Cog):
         guild = interaction.guild
         name = (speaker or "").strip()
         if not name:
-            # 話者名を省いたときは Bot の声（いま使っている声）を対象にする。
+            # 話者名を省いたときは Bot の声（/botvoice の設定、無ければサーバー既定）。
             player = self.players.get(guild.id) if guild is not None else None
-            speaker_id = (
-                player.speaker_id if player is not None else self.config.default_speaker
+            name = self.bot_voice_name() or str(
+                await self._voice_name(self.bot_speaker(player))
             )
-            name = str(await self._voice_name(speaker_id))
         if clear:
             removed = self.voice_lengths.remove(name)
             default = self.config.max_message_length
@@ -664,6 +682,69 @@ class ReaderCog(commands.Cog):
         self.voice_lengths.set(name, value)
         await interaction.response.send_message(
             f"{name} は先頭 {value} 文字まで読み上げます。", ephemeral=True
+        )
+
+    @app_commands.command(
+        name="botvoice",
+        description="Bot自身の返答を読む声を設定します（オーナーのみ）",
+    )
+    @app_commands.describe(
+        speaker="声（話者）の名前。省略すると現在の設定を表示",
+        clear="設定を消してサーバー既定の声に戻す",
+    )
+    @app_commands.autocomplete(speaker=_speaker_name_choices)
+    @app_commands.guild_only()
+    async def botvoice(
+        self,
+        interaction: discord.Interaction,
+        speaker: str | None = None,
+        clear: bool = False,
+    ):
+        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+            await interaction.response.send_message(
+                "このコマンドはオーナーだけが使えます。", ephemeral=True
+            )
+            return
+        guild = interaction.guild
+        store = getattr(self, "bot_voice", None)
+        if clear:
+            removed = bool(store is not None and store.remove("bot"))
+            player = self.players.get(guild.id) if guild is not None else None
+            fallback = await self._voice_name(self.bot_speaker(None if removed else player))
+            await interaction.response.send_message(
+                (
+                    f"Bot の声をサーバー既定（{fallback}）に戻しました。"
+                    if removed
+                    else f"Bot の声は未設定です（サーバー既定: {fallback}）。"
+                ),
+                ephemeral=True,
+            )
+            return
+        name = (speaker or "").strip()
+        if not name:
+            current = self.bot_voice_name()
+            if current:
+                message = f"Bot の声は {current} です。"
+            else:
+                player = self.players.get(guild.id) if guild is not None else None
+                fallback = await self._voice_name(self.bot_speaker(player))
+                message = f"Bot の声は未設定です（サーバー既定: {fallback}）。"
+            await interaction.response.send_message(message, ephemeral=True)
+            return
+        available = [voice_name for _, voice_name in await self._flatten_speakers()]
+        if available and name not in available:
+            await interaction.response.send_message(
+                "その話者は見つかりません。候補から選んでください。", ephemeral=True
+            )
+            return
+        if store is None:
+            await interaction.response.send_message(
+                "声の設定を保存できません。", ephemeral=True
+            )
+            return
+        store.set("bot", name)
+        await interaction.response.send_message(
+            f"Bot の声を {name} にしました。", ephemeral=True
         )
 
     @app_commands.command(
@@ -840,8 +921,10 @@ class ReaderCog(commands.Cog):
             or not player.voice_client.is_connected()
         ):
             return
-        # 文字数は Bot の声（player.speaker_id）の設定。未設定なら config の既定。
-        max_length = await self.tts_length_for(player.speaker_id)
+        # 声は /botvoice の設定。無ければサーバー既定（player.speaker_id）。
+        speaker = self.bot_speaker(player)
+        # 文字数はその声の設定。未設定なら config の既定。
+        max_length = await self.tts_length_for(speaker)
         text = prepare_text(text, max_length)
         text = filter_emojis(text, player.allow_nonverbal_emojis)
         if not has_readable_text(text):
@@ -856,16 +939,16 @@ class ReaderCog(commands.Cog):
             # tts では従来どおり本文をまとめて読む（話者・速度は既定）。
             player.enqueue(
                 text,
-                player.speaker_id,
+                speaker,
                 self.config.default_speed,
                 post_id,
                 author_key,
             )
             return
         # full: Bot の応答もユーザー投稿と同じ読み方にする。
-        voice_speed = await self.tts_speed_for(player.speaker_id)
+        voice_speed = await self.tts_speed_for(speaker)
         base_speed = voice_speed if voice_speed is not None else self.config.default_speed
-        gain = await self.tts_gain_for(player.speaker_id)
+        gain = await self.tts_gain_for(speaker)
         pieces = _parse_pieces(text, base_speed)
         for chunk, chunk_speed, chunk_effects in pieces:
             for segment in self.dictionary.split(chunk):
@@ -882,7 +965,7 @@ class ReaderCog(commands.Cog):
                     elif has_readable_text(segment.text):
                         player.enqueue(
                             segment.text,
-                            player.speaker_id,
+                            speaker,
                             chunk_speed,
                             post_id,
                             author_key,
@@ -892,7 +975,7 @@ class ReaderCog(commands.Cog):
                 elif has_readable_text(segment.value):
                     player.enqueue(
                         segment.value,
-                        player.speaker_id,
+                        speaker,
                         chunk_speed,
                         post_id,
                         author_key,
@@ -1241,6 +1324,7 @@ class ReaderCog(commands.Cog):
             "- /leave — 読み上げ停止・VC退出",
             "- /mytalk — 自分の声・ミュートを選択し、**✅ 設定する**で確定",
             "- /forcevoice — メンバーの声を強制変更（オーナーのみ。本人設定より優先）",
+            "- /botvoice — Bot自身の返答を読む声を設定（オーナーのみ）",
             "- /readlength — 話者ごとの「先頭何文字まで読むか」（オーナーのみ）",
             "- /emoji enabled: — 👅💋の読み上げを切り替え（既定は無効）",
             "- 投稿の先頭に ;・: — **その投稿だけ**読み上げない",

@@ -235,6 +235,7 @@ def build(env, backends, data_dir):
             "lengths_path": path("voice_lengths.json"),
             "user_voices_path": path("user_voices.json"),
             "forced_voices_path": path("forced_voices.json"),
+            "bot_voice_path": path("bot_voice.json"),
             "announcement_history_path": path("vc_announcements.json"),
             "announcement_cache_dir": path("join_voice"),
             "announcement_voice": text(env, "VC_ANNOUNCEMENT_VOICE")
