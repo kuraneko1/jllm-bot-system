@@ -14,7 +14,13 @@ from dataclasses import dataclass
 import discord
 from jllm_tts import TTSBackend, TTSBackendError, TTSContentError
 
-from jllm_plugins.audio_effects import build_filter, describe_effects
+from jllm_plugins.audio_effects import (
+    atempo_filter,
+    build_filter,
+    describe_effects,
+    match_level,
+    tempo_filter,
+)
 from jllm_plugins.ducking.duck_curve import DuckCurve
 
 
@@ -76,7 +82,7 @@ def load_duck_curve(config: PlayerConfig | None = None) -> DuckCurve:
 
 
 # Irodori-TTS-Server の speed 受付範囲（Field ge=0.25, le=4.0）。
-# 範囲外はサーバー側で弾かれるため、はみ出し分は手元の atempo で補う。
+# 範囲外はサーバー側で弾かれるため、はみ出し分は手元の時間伸縮で補う。
 TTS_SERVER_MIN_SPEED = 0.25
 TTS_SERVER_MAX_SPEED = 4.0
 
@@ -91,6 +97,10 @@ class SpeechItem:
     effects: tuple = ()
     post_id: str | None = None
     author_key: str | None = None
+    #: 再生する最大秒数（None は無制限）。短い音声はそのまま再生する。
+    seconds: float | None = None
+    #: 同じピースから作られた複数アイテムで秒数の残りを共有する ID。
+    limit_group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -206,6 +216,8 @@ class SpeechPlayer:
 
         self.allow_nonverbal_emojis = _config_of(self).allow_nonverbal_emojis
         self.skip_users: set[int] = set()
+        #: 秒数指定の残り（limit_group ごと）。同期ループなので順序どおりに減る。
+        self._limits: dict[str, float] = {}
 
         # 空気読み（人が喋っている間だけ音量を下げる）※実験機能
         self.ducker = None
@@ -454,6 +466,8 @@ class SpeechPlayer:
         author_key: str | None = None,
         volume: float | None = None,
         effects: tuple | None = None,
+        seconds: float | None = None,
+        limit_group: str | None = None,
     ) -> bool:
         if self.closed:
             return False
@@ -466,6 +480,8 @@ class SpeechPlayer:
             effects=() if effects is None else tuple(effects),
             post_id=post_id,
             author_key=author_key,
+            seconds=None if seconds is None else float(seconds),
+            limit_group=limit_group,
         )
 
         try:
@@ -484,6 +500,8 @@ class SpeechPlayer:
         post_id: str | None = None,
         author_key: str | None = None,
         effects: tuple | None = None,
+        seconds: float | None = None,
+        limit_group: str | None = None,
     ) -> bool:
         if self.closed:
             return False
@@ -497,6 +515,8 @@ class SpeechPlayer:
             effects=() if effects is None else tuple(effects),
             post_id=post_id,
             author_key=author_key,
+            seconds=None if seconds is None else float(seconds),
+            limit_group=limit_group,
         )
 
         try:
@@ -521,20 +541,14 @@ class SpeechPlayer:
             return None
 
     @staticmethod
+    def _tempo_filter(speed: float) -> str:
+        """速度変更。rubberband で 1 回で伸縮する（ぶつ切れを避ける）。"""
+        return tempo_filter(speed)
+
+    @staticmethod
     def _atempo_filters(speed: float) -> str:
-        filters = []
-        value = speed
-
-        while value > 2.0:
-            filters.append("atempo=2.0")
-            value /= 2.0
-
-        while value < 0.5:
-            filters.append("atempo=0.5")
-            value /= 0.5
-
-        filters.append(f"atempo={value:.6f}")
-        return ",".join(filters)
+        """rubberband が無い ffmpeg 用の代替（段を重ねる WSOLA）。"""
+        return atempo_filter(speed)
 
     @staticmethod
     def _ffmpeg_to_wav(input_path: str, filtrate: str) -> bytes | None:
@@ -580,7 +594,12 @@ class SpeechPlayer:
 
     @staticmethod
     def _apply_speed(path: str, speed: float) -> bytes | None:
-        return SpeechPlayer._ffmpeg_to_wav(path, SpeechPlayer._atempo_filters(speed))
+        audio = SpeechPlayer._read_sound(path)
+
+        if audio is None:
+            return None
+
+        return SpeechPlayer._apply_speed_bytes(audio, speed)
 
     @staticmethod
     def _apply_speed_bytes(audio: bytes, speed: float) -> bytes | None:
@@ -596,7 +615,21 @@ class SpeechPlayer:
             with open(input_path, "wb") as handle:
                 handle.write(audio)
 
-            return SpeechPlayer._ffmpeg_to_wav(input_path, SpeechPlayer._atempo_filters(speed))
+            stretched = SpeechPlayer._ffmpeg_to_wav(
+                input_path, SpeechPlayer._tempo_filter(speed)
+            )
+
+            if stretched is None:
+                # rubberband が無い ffmpeg では従来の atempo で代用する。
+                stretched = SpeechPlayer._ffmpeg_to_wav(
+                    input_path, SpeechPlayer._atempo_filters(speed)
+                )
+
+            if stretched is None:
+                return None
+
+            # 位相ボコーダは重ね合わせで 1〜2.5dB 下がるので、元の音量へ戻す。
+            return match_level(audio, stretched)
 
         except OSError:
             logger.exception("倍速処理に失敗")
@@ -608,6 +641,78 @@ class SpeechPlayer:
 
             except OSError:
                 pass
+
+    @staticmethod
+    def _wav_seconds(audio: bytes) -> float:
+        """wav の長さ（秒）。読めなければ 0。"""
+        try:
+            with wave.open(io.BytesIO(audio), "rb") as reader:
+                rate = reader.getframerate() or 0
+                return reader.getnframes() / rate if rate else 0.0
+
+        except (wave.Error, EOFError):
+            return 0.0
+
+    @staticmethod
+    def _trim_wav(audio: bytes, seconds: float) -> bytes:
+        """先頭から seconds 秒だけ残す（フレーム境界で切る）。"""
+        try:
+            with wave.open(io.BytesIO(audio), "rb") as reader:
+                params = reader.getparams()
+                frames = reader.readframes(reader.getnframes())
+
+        except (wave.Error, EOFError):
+            return audio
+
+        limit = (
+            int(max(0.0, seconds) * params.framerate)
+            * params.nchannels
+            * params.sampwidth
+        )
+
+        if limit >= len(frames):
+            return audio
+
+        output = io.BytesIO()
+
+        with wave.open(output, "wb") as writer:
+            writer.setparams(params)
+            writer.writeframes(frames[:limit])
+
+        return output.getvalue()
+
+    def _limit_audio(self, item: SpeechItem, audio: bytes | None) -> bytes | None:
+        """秒数指定に合わせて切り詰める。残りが無ければ None（再生しない）。"""
+        if audio is None or item.seconds is None:
+            return audio
+
+        group = item.limit_group
+        remaining = (
+            self._limits.get(group, item.seconds) if group is not None else item.seconds
+        )
+
+        if remaining <= 0:
+            if group is not None:
+                self._limits[group] = 0.0
+
+            return None
+
+        duration = self._wav_seconds(audio)
+
+        if duration > remaining:
+            audio = self._trim_wav(audio, remaining)
+            played = remaining
+        else:
+            played = duration
+
+        if group is not None:
+            self._limits[group] = max(0.0, remaining - played)
+
+            if len(self._limits) > 256:
+                for key in list(self._limits)[:64]:
+                    del self._limits[key]
+
+        return audio
 
     @staticmethod
     def _scale_wav(audio: bytes, volume: float) -> bytes:
@@ -739,6 +844,10 @@ class SpeechPlayer:
             return False
 
         if item.effects:
+            return False
+
+        # 秒数で切るには音声全体の長さが要るので、いったん wav を作る。
+        if item.seconds is not None:
             return False
 
         # バックエンドが話者ごとの速度を無視する（DRAMA3 の ignore_speaker_speed 等）なら、
@@ -980,6 +1089,12 @@ class SpeechPlayer:
                 getattr(self, "effects", None),
             )
 
+        if item.seconds is not None:
+            audio = await asyncio.to_thread(self._limit_audio, item, audio)
+
+            if audio is None:
+                return None
+
         return await asyncio.to_thread(
             self._scale_wav,
             audio,
@@ -1032,6 +1147,12 @@ class SpeechPlayer:
                             _config_of(self),
                             getattr(self, "effects", None),
                         )
+
+                    if item.seconds is not None:
+                        audio = await asyncio.to_thread(self._limit_audio, item, audio)
+
+                        if audio is None:
+                            continue
 
                     audio = await asyncio.to_thread(
                         self._scale_wav,

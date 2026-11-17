@@ -108,12 +108,9 @@ class SoundApprovalTests(unittest.IsolatedAsyncioTestCase):
         interaction = self.interaction(99)
         with patch.object(self.cog.config, 'dashboard_url', 'https://admin.example:8443'):
             await ReaderCog.help.callback(self.cog, interaction)
-        self.assertIn('https://admin.example:8443/', interaction.followup.send.call_args.args[0])
         message = interaction.followup.send.call_args.args[0]
-        self.assertTrue(message.startswith('## '))
-        self.assertIn('### 読み上げ', message)
-        self.assertIn('- `/join`', message)
-        self.assertLess(len(message), 1900)
+        # /help は共通ボードの URL だけを返す。
+        self.assertEqual(message, 'https://admin.example:8443/')
 
     async def test_rebuild_removes_retired_public_sound_page(self):
         self.cog.html_dir = self.cog.pending_sound_dir.parent / 'html'

@@ -141,6 +141,26 @@ class InlineSpeedTests(unittest.TestCase):
         self.assertEqual(pieces[1], ("B", 1.2))
 
 
+class SignedPitchTests(unittest.TestCase):
+    def test_minus_can_come_before_or_after_the_code(self):
+        # pi20 の逆方向。pi-3 と -pi3 は同じ -3 半音。
+        self.assertEqual(_parse_pieces("A pi-3", 1.2), [("A", 1.2, (("pi", -3.0),))])
+        self.assertEqual(_parse_pieces("A -pi3", 1.2), [("A", 1.2, (("pi", -3.0),))])
+        self.assertEqual(_parse_pieces("A pi20", 1.2), [("A", 1.2, (("pi", 20.0),))])
+
+    def test_negative_pitch_is_clamped_to_two_octaves(self):
+        self.assertEqual(_parse_pieces("A pi-99", 1.2)[0][2], (("pi", -24.0),))
+
+    def test_sign_on_other_effects_is_ignored(self):
+        self.assertEqual(_parse_pieces("A -rb3", 1.2)[0][2], (("rb", 3.0),))
+
+    def test_group_suffix_accepts_negative_pitch(self):
+        self.assertEqual(
+            _parse_pieces("(A B)-pi3", 1.2),
+            [("A B", 1.2, (("pi", -3.0),))],
+        )
+
+
 class InlineEffectTests(unittest.TestCase):
     def test_effect_attaches_to_preceding_chunk(self):
         self.assertEqual(

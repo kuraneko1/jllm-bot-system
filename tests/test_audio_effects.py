@@ -1,3 +1,5 @@
+import array
+import io
 import math
 import random
 import shutil
@@ -14,7 +16,10 @@ from jllm_plugins.audio_effects import (
     IR_RATE,
     build_filter,
     clamp_intensity,
+    clamp_pitch,
     describe_effects,
+    match_level,
+    tempo_filter,
 )
 
 # 畳み込みグラフを組む ec 以外（単純なフィルタ文字列を返すもの）。
@@ -255,6 +260,62 @@ class AudioEffectsTests(unittest.TestCase):
         factor = float(filtrate.split("=")[-1])
         self.assertAlmostEqual(factor, 2.0, places=3)
         self.assertTrue(math.isfinite(factor))
+
+    def test_pitch_can_go_down(self):
+        # 以前は強さを 1〜20 に丸めていたので下降できなかった。
+        factor = float(build_filter([("pi", -3.0)]).split("=")[-1])
+        self.assertAlmostEqual(factor, 2.0 ** (-3 / 12), places=3)
+        self.assertLess(factor, 1.0)
+        self.assertEqual(clamp_pitch(-3.0), -3.0)
+        self.assertEqual(clamp_pitch(-99.0), -24.0)
+
+    def test_bass_reaches_the_voice_band(self):
+        # 110Hz の棚だけだと 150-250Hz（声の太さ）が +1dB しか上がらない。
+        filtrate = build_filter([("bs", 10.0)])
+        self.assertIn("f=160", filtrate)
+        self.assertIn("equalizer=f=260", filtrate)
+        self.assertIn("alimiter", filtrate)
+
+    def test_match_level_restores_the_volume(self):
+        # rubberband は位相ボコーダの重ね合わせで音量が下がる。速度だけを
+        # 変えるため、元の RMS に戻す（テストでは 0.5 倍のトーンで代用）。
+        def tone(amplitude):
+            frames = b"".join(
+                struct.pack(
+                    "<h",
+                    int(amplitude * 32767 * math.sin(2 * math.pi * 220 * index / 24000)),
+                )
+                for index in range(2400)
+            )
+            output = io.BytesIO()
+
+            with wave.open(output, "wb") as writer:
+                writer.setnchannels(1)
+                writer.setsampwidth(2)
+                writer.setframerate(24000)
+                writer.writeframes(frames)
+
+            return output.getvalue()
+
+        def rms(audio):
+            with wave.open(io.BytesIO(audio)) as reader:
+                samples = array.array("h")
+                samples.frombytes(reader.readframes(reader.getnframes()))
+
+            return math.sqrt(sum(value * value for value in samples) / len(samples))
+
+        source = tone(0.5)
+        quiet = tone(0.25)
+        matched = match_level(source, quiet)
+        self.assertAlmostEqual(rms(matched) / rms(source), 1.0, places=2)
+        # 読めないデータはそのまま返す。
+        self.assertEqual(match_level(b"nope", b"nope"), b"nope")
+
+    def test_tempo_is_a_single_rubberband_pass(self):
+        # atempo は 0.5 未満で段を重ねる。rubberband は 1 回で伸ばす。
+        self.assertEqual(tempo_filter(0.5), "rubberband=tempo=0.500000")
+        self.assertEqual(tempo_filter(0.25), "rubberband=tempo=0.250000")
+        self.assertEqual(tempo_filter(0.0), "rubberband=tempo=1.000000")
 
     def test_combination_keeps_order_and_single_limiter(self):
         filtrate = build_filter([("rb", 2.0), ("pi", 4.0), ("bs", 1.0)])

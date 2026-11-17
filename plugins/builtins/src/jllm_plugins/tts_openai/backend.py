@@ -19,6 +19,8 @@ import wave
 import aiohttp
 from jllm_tts import TTSBackend, TTSBackendError, TTSContentError, Voice
 
+from jllm_plugins.audio_effects import atempo_filter, match_level, tempo_filter
+
 logger = logging.getLogger(__name__)
 
 #: 無音だったときの再試行で使う seed（実測で正常な音声が返った値）。
@@ -210,25 +212,16 @@ class OpenAITTSBackend(TTSBackend):
     @staticmethod
     def _atempo_filter(speed: float) -> str:
         """ffmpeg の atempo は 0.5〜2.0 しか受けないので、範囲内に割って繋ぐ。"""
+        return atempo_filter(speed)
 
-        filters = []
-        value = speed
-
-        while value > 2.0:
-            filters.append("atempo=2.0")
-            value /= 2.0
-
-        while value < 0.5:
-            filters.append("atempo=0.5")
-            value /= 0.5
-
-        filters.append(f"atempo={value:.6f}")
-
-        return ",".join(filters)
+    @staticmethod
+    def _tempo_filter(speed: float) -> str:
+        """速度変更（rubberband）。0.5 未満でも 1 回で滑らかに伸ばす。"""
+        return tempo_filter(speed)
 
     @classmethod
-    def _apply_tempo(cls, audio: bytes, speed: float) -> bytes | None:
-        """合成済みの wav に atempo をかける（失敗したら None）。"""
+    def _run_filter(cls, audio: bytes, filtrate: str) -> bytes | None:
+        """合成済みの wav にフィルタを 1 回かける（失敗したら None）。"""
 
         try:
             with tempfile.TemporaryDirectory() as directory:
@@ -246,7 +239,7 @@ class OpenAITTSBackend(TTSBackend):
                         "-i",
                         source,
                         "-filter:a",
-                        cls._atempo_filter(speed),
+                        filtrate,
                         "-y",
                         target,
                     ],
@@ -254,7 +247,7 @@ class OpenAITTSBackend(TTSBackend):
                 )
 
                 if result.returncode != 0:
-                    logger.warning("atempo に失敗しました: %s", result.stderr[-200:])
+                    logger.warning("音声の長さ変更に失敗しました: %s", result.stderr[-200:])
                     return None
 
                 with open(target, "rb") as handle:
@@ -263,6 +256,19 @@ class OpenAITTSBackend(TTSBackend):
         except OSError:
             logger.exception("速度変更に失敗しました")
             return None
+
+    @classmethod
+    def _apply_tempo(cls, audio: bytes, speed: float) -> bytes | None:
+        """速度変更。rubberband を先に試し、無ければ atempo に落とす。"""
+
+        for filtrate in (tempo_filter(speed), atempo_filter(speed)):
+            adjusted = cls._run_filter(audio, filtrate)
+
+            if adjusted is not None:
+                # 位相ボコーダで下がった音量を元へ戻す（速度だけ変える）。
+                return match_level(audio, adjusted)
+
+        return None
 
     # ---------------------------------------------------------------- 無音対策
 

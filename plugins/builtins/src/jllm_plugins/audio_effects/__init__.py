@@ -7,11 +7,17 @@ Each effect has a 2-letter code and an intensity. ``rb`` means intensity 1,
 ``build_filter`` がフィルタグラフを組み立てる。IR は ``ir/room.wav``。
 """
 
+import array
+import io
 import math
 import wave
 
 MIN_INTENSITY = 1.0
 MAX_INTENSITY = 20.0
+
+#: ピッチだけは符号付き（半音）。-24〜+24 の 2 オクターブまで。
+PITCH_MIN = -24.0
+PITCH_MAX = 24.0
 
 # 畳み込みは音源のサンプルレートに依存するため、グラフ内で 48kHz に揃える。
 IR_RATE = 48000
@@ -42,6 +48,17 @@ def clamp_intensity(value) -> float:
     if not math.isfinite(number):
         return 1.0
     return min(MAX_INTENSITY, max(MIN_INTENSITY, number))
+
+
+def clamp_pitch(value) -> float:
+    """ピッチの半音数を -24〜+24 に丸める（負は下降）。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(number):
+        return 1.0
+    return min(PITCH_MAX, max(PITCH_MIN, number))
 
 
 def _num(value) -> str:
@@ -177,13 +194,27 @@ def _lofi(intensity):
 
 
 def _bass(intensity):
-    # 20 まで素直に伸ばすと 43dB になり、音量が +9dB 暴騰する。12dB で頭打ち。
-    gain = min(12.0, 2.0 + 0.8 * intensity)
-    return f"bass=g={_num(gain)}:f=110", True
+    """低音増強。
+
+    以前は 110Hz の棚（幅 Q=0.5）だけだった。声の基本波は 100〜250Hz に
+    あり、棚の中心より上ではほとんど持ち上がらない（実測: 男性声で
+    100-150Hz +5.8dB に対して 150-250Hz +0.6dB、女性声では 150-250Hz
+    +0.9dB）。強さ1（bs だけ）では 100-150Hz +1.4dB で、聴き分けられ
+    なかった。そこで棚を 160Hz・Q=0.7 に上げ、260Hz に低中域の山を足す。
+    20 まで素直に伸ばすと音量が暴騰するため、棚 9.5dB・山 3.5dB で頭打ち。
+    """
+    gain = min(12.0, 3.4 + 0.7 * intensity)
+    shelf = min(9.5, gain * 0.8)
+    body = min(3.5, gain * 0.3)
+    return (
+        f"bass=g={_num(shelf)}:f=160:t=q:w=0.7,"
+        f"equalizer=f=260:t=q:w=1.4:g={_num(body)}"
+    ), True
 
 
 def _pitch(intensity):
-    factor = 2.0 ** (intensity / 12.0)
+    """半音単位のピッチ。負で下降する（pi-3 / -pi3）。"""
+    factor = 2.0 ** (clamp_pitch(intensity) / 12.0)
     return f"rubberband=pitch={_num(factor)}", False
 
 
@@ -295,6 +326,112 @@ def _tree_chime(intensity):
     return ("graph", ";".join(nodes)), True
 
 
+def atempo_filter(speed: float) -> str:
+    """ffmpeg の atempo は 1 回で 0.5〜2.0 しか受けないので、割って繋ぐ。
+
+    speed が 1/2 未満・2 倍超のときに段が増え、粒の繰り返しが目立つ。
+    rubberband が使えないときの代替としてだけ使う。
+    """
+    filters = []
+    value = float(speed)
+
+    while value > 2.0:
+        filters.append("atempo=2.0")
+        value /= 2.0
+
+    while value < 0.5:
+        filters.append("atempo=0.5")
+        value /= 0.5
+
+    filters.append(f"atempo={value:.6f}")
+    return ",".join(filters)
+
+
+def _wav_pcm(audio: bytes):
+    """16bit PCM wav の (samples, params)。読めなければ None。"""
+    try:
+        with wave.open(io.BytesIO(audio)) as reader:
+            params = reader.getparams()
+
+            if params.sampwidth != 2:
+                return None
+
+            samples = array.array("h")
+            samples.frombytes(reader.readframes(reader.getnframes()))
+
+    except (OSError, wave.Error, EOFError):
+        return None
+
+    return samples, params
+
+
+def match_level(source: bytes, result: bytes, peak_limit: float = 0.98) -> bytes:
+    """時間伸縮で下がった音量を元へ戻す。
+
+    ffmpeg の rubberband は位相ボコーダの重ね合わせで 1〜2.5dB 下がる
+    （実測: 0.5倍で -2.3dB、1.5倍で -2.5dB）。速度だけ変えて音量は
+    変えないよう、元の RMS に合わせる。ピークが上限を超える分は抑える。
+    """
+    src = _wav_pcm(source)
+    out = _wav_pcm(result)
+
+    if src is None or out is None:
+        return result
+
+    source_samples, params = src
+    samples, _ = out
+
+    if not len(source_samples) or not len(samples):
+        return result
+
+    source_rms = math.sqrt(sum(value * value for value in source_samples) / len(source_samples))
+    result_rms = math.sqrt(sum(value * value for value in samples) / len(samples))
+
+    if source_rms <= 0 or result_rms <= 0:
+        return result
+
+    scale = source_rms / result_rms
+    peak = max(abs(value) for value in samples) * scale
+    ceiling = peak_limit * 32767
+
+    if peak > ceiling:
+        scale *= ceiling / peak
+
+    for index, value in enumerate(samples):
+        scaled = int(value * scale)
+
+        if scaled > 32767:
+            scaled = 32767
+        elif scaled < -32768:
+            scaled = -32768
+
+        samples[index] = scaled
+
+    output = io.BytesIO()
+
+    with wave.open(output, "wb") as writer:
+        writer.setparams(params)
+        writer.writeframes(samples.tobytes())
+
+    return output.getvalue()
+
+
+def tempo_filter(speed: float) -> str:
+    """速度変更を 1 回で行う（rubberband）。
+
+    atempo は 30ms の粒を継ぎ足す WSOLA で、伸ばすほど粒の境目が聴こえ、
+    「ぶつ切れ」に聞こえる。rubberband は位相ボコーダで、0.01〜100 倍を
+    1 回で連続的に伸縮する（声の倍音とフォルマントが途切れない）。
+    """
+    value = float(speed)
+
+    if not math.isfinite(value) or value <= 0:
+        value = 1.0
+
+    value = min(100.0, max(0.01, value))
+    return f"rubberband=tempo={value:.6f}"
+
+
 EFFECTS = {
     # code: (label_ja, builder, description)
     "rb": ("リバーブ", _reverb, "部屋の響き。数字で部屋の大きさ"),
@@ -304,7 +441,7 @@ EFFECTS = {
     "vi": ("ビブラート", _vibrato, "声の揺れ。数字で速さと深さ"),
     "lo": ("ローファイ", _lofi, "潰れた音＋電話・ラジオ風。数字で潰し具合と帯域"),
     "bs": ("重低音", _bass, "低音増強。数字でdB相当"),
-    "pi": ("ピッチ", _pitch, "声の高さ。数字は半音（pi4で+4半音）"),
+    "pi": ("ピッチ", _pitch, "声の高さ。数字は半音（pi4で+4半音、pi-3で-3半音）"),
     "rv": ("逆再生", _reverse, "逆向き再生。数字は無視"),
     "lm": ("ラウド", _loud, "音圧上げ。数字で圧縮の強さ"),
     "wd": ("広がり", _widen, "左右に広げる。数字で広がりの強さ"),
@@ -337,6 +474,8 @@ def build_filter(effects, ir_path: str | None = None) -> str | None:
         try:
             if lowered == "ec":
                 piece, wants_limiter = builder(clamp_intensity(intensity), ir_path=ir_path)
+            elif lowered == "pi":
+                piece, wants_limiter = builder(clamp_pitch(intensity))
             else:
                 piece, wants_limiter = builder(clamp_intensity(intensity))
         except ValueError, TypeError, ArithmeticError:
@@ -379,5 +518,10 @@ def describe_effects(effects) -> str:
         entry = EFFECTS.get(str(code).lower())
         if entry is None:
             continue
-        names.append(f"{entry[0]}x{clamp_intensity(intensity):g}")
+        value = (
+            clamp_pitch(intensity)
+            if str(code).lower() == "pi"
+            else clamp_intensity(intensity)
+        )
+        names.append(f"{entry[0]}x{value:g}")
     return "＋".join(names)
