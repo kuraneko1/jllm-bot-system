@@ -81,7 +81,9 @@ let sharedAudioCtx = null;
 
 export function previewVolume() {
   try {
-    const raw = Number(localStorage.getItem("readingPreviewVolume"));
+    const stored = localStorage.getItem("readingPreviewVolume");
+    if (stored === null || stored === "") return 1;
+    const raw = Number(stored);
     return Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 1;
   } catch (_) {
     return 1;
@@ -95,7 +97,8 @@ export function savePreviewVolume(value) {
 }
 
 export function setAudioVolume(audio, value) {
-  const level = Math.min(3, Math.max(0, Number(value) || 0));
+  const numeric = value === null || value === undefined || value === "" ? 1 : Number(value);
+  const level = Number.isFinite(numeric) ? Math.min(3, Math.max(0, numeric)) : 1;
   if (level <= 1) {
     audio.volume = level;
     if (audio._gainNode) audio._gainNode.gain.value = 1;
@@ -111,6 +114,7 @@ export function setAudioVolume(audio, value) {
       gain.connect(sharedAudioCtx.destination);
       audio._gainNode = gain;
     }
+    if (sharedAudioCtx.state === "suspended") sharedAudioCtx.resume().catch(() => {});
     audio._gainNode.gain.value = level;
   } catch (_) {}
 }
