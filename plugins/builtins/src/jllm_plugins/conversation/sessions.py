@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS turns (
     user_id TEXT, user_name TEXT,
     content TEXT,
     message_id TEXT,
-    created_at TEXT
+    created_at TEXT,
+    tool_trace TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -147,10 +148,20 @@ class SessionStore:
         finally:
             connection.close()
 
+    @staticmethod
+    def _migrate_session(connection):
+        """古いセッションDBに足りない列を補う。"""
+        present = {row["name"] for row in connection.execute("PRAGMA table_info(turns)")}
+
+        for column in ("tool_trace",):
+            if column not in present:
+                connection.execute(f"ALTER TABLE turns ADD COLUMN {column} TEXT")
+
     @contextmanager
     def _session_db(self, session_id):
         connection = _connect(self._file(session_id))
         connection.executescript(_SESSION_SCHEMA)
+        self._migrate_session(connection)
         try:
             yield connection
             connection.commit()
@@ -421,21 +432,34 @@ class SessionStore:
             ).fetchall()
 
         records = []
+        # 修正前に保存された、本文へツール呼び出しが混入した回答を履歴に出さない。
+        from jllm_plugins.llm.translation import strip_tool_markup
 
         for row in reversed(rows):
-            text = (row["content"] or "").strip()
+            text = strip_tool_markup((row["content"] or "").strip())
 
             if not text:
                 continue
 
-            records.append(
-                {
-                    "id": str(row["message_id"] or "turn-{}".format(row["id"])),
-                    "reply_to": None,
-                    "author": "Bot" if row["role"] == "assistant" else (row["user_name"] or "不明"),
-                    "text": text,
-                }
-            )
+            record = {
+                "id": str(row["message_id"] or "turn-{}".format(row["id"])),
+                "reply_to": None,
+                "author": "Bot" if row["role"] == "assistant" else (row["user_name"] or "不明"),
+                "text": text,
+            }
+            # その回答で実行した検索（後続のターンで参照できるように残す）。
+            raw_trace = row["tool_trace"] if "tool_trace" in row.keys() else None
+
+            if raw_trace:
+                try:
+                    trace = json.loads(raw_trace)
+                except ValueError:
+                    trace = None
+
+                if trace:
+                    record["search"] = trace
+
+            records.append(record)
 
         return records
 
@@ -750,11 +774,31 @@ class SessionStore:
             session_id, "user", user_id, user_name, text, message_id, count_user=True, at=created_at
         )
 
-    def append_assistant(self, session_id, text, message_id=None, created_at=None) -> int:
-        return self._append(session_id, "assistant", None, "", text, message_id, at=created_at)
+    def append_assistant(
+        self, session_id, text, message_id=None, created_at=None, trace=None
+    ) -> int:
+        return self._append(
+            session_id,
+            "assistant",
+            None,
+            "",
+            text,
+            message_id,
+            at=created_at,
+            trace=trace,
+        )
 
     def _append(
-        self, session_id, role, user_id, user_name, content, message_id, count_user=False, at=None
+        self,
+        session_id,
+        role,
+        user_id,
+        user_name,
+        content,
+        message_id,
+        count_user=False,
+        at=None,
+        trace=None,
     ) -> int:
         path = self._file(session_id)
 
@@ -763,10 +807,14 @@ class SessionStore:
 
         moment = _iso(at)
 
+        trace_json = (
+            json.dumps(trace, ensure_ascii=False) if trace else None
+        )
+
         with self._session_db(session_id) as connection:
             cursor = connection.execute(
-                "INSERT INTO turns (role, user_id, user_name, content, message_id, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO turns (role, user_id, user_name, content, message_id, created_at,"
+                " tool_trace) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     role,
                     str(user_id) if user_id else None,
@@ -774,6 +822,7 @@ class SessionStore:
                     str(content or ""),
                     str(message_id) if message_id else None,
                     moment,
+                    trace_json,
                 ),
             )
             turn_id = int(cursor.lastrowid)

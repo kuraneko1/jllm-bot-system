@@ -336,12 +336,14 @@ class CogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.calls, [])
         message.reply.assert_not_awaited()
 
-    async def test_a_channel_outside_the_whitelist_does_nothing(self):
+    async def test_a_channel_outside_the_whitelist_still_summarizes(self):
+        # 今北産業は許可チャンネルに限らず、どのチャンネルでも動く。
         message = self.trigger()
         message.channel.id = 999
         await self.cog.on_message(message)
-        self.assertEqual(self.client.calls, [])
-        message.reply.assert_not_awaited()
+        self.assertEqual(len(self.client.calls), 1)
+        message.reply.assert_awaited_once()
+        self.assertEqual(message.reply.call_args.args[0], "一行目\n二行目\n三行目")
 
     async def test_failure_notifies_instead_of_raising(self):
         self.client.answer = RuntimeError("停止中")

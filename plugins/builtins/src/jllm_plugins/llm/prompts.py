@@ -142,6 +142,23 @@ def discord_log(records) -> str:
         if not text:
             continue
 
-        lines.append("{}: {}".format(record.get("author") or "?", text))
+        line = "{}: {}".format(record.get("author") or "?", text)
+        notes = []
+
+        for item in record.get("search") or []:
+            if not isinstance(item, dict):
+                continue
+
+            arguments = item.get("arguments") or {}
+
+            if item.get("tool") == "web_search":
+                notes.append("検索: " + str(arguments.get("query") or ""))
+            elif item.get("tool") == "read_page":
+                notes.append("閲覧: " + str(arguments.get("url") or ""))
+
+        if notes:
+            line += "（" + " / ".join(notes[:4]) + "）"
+
+        lines.append(line)
 
     return "\n".join(lines)

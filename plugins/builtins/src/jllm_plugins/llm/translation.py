@@ -14,6 +14,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -23,6 +24,95 @@ from pathlib import Path
 import aiohttp
 
 from . import prompts
+
+logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------------ 本文ツール呼び出し
+# Sarashina のチャットテンプレートは、サーバ側のパーサが効かない文脈で
+# ツール呼び出しを **本文** に書くことがある（実測）:
+#
+#   <|SBML|tool_calls>
+#   <|SBML|invoke name="web_search">
+#   <|SBML|parameter name="query">Ollama 地元の LLM</|SBML|parameter>
+#   </|SBML|invoke>
+#   </|SBML|tool_calls>
+#
+# これをそのまま投稿すると利用者に生のタグが見えるので、tool_calls へ変換する。
+
+# 縦棒は ASCII の | と全角の ｜ の両方が来る（実測: 全角）。
+_PIPE = r"[|｜]"
+_SBML_BLOCK = re.compile(
+    rf"<{_PIPE}SBML{_PIPE}tool_calls>(.*?)</{_PIPE}SBML{_PIPE}tool_calls>",
+    re.DOTALL | re.IGNORECASE,
+)
+_SBML_INVOKE = re.compile(
+    rf"<{_PIPE}SBML{_PIPE}invoke\s+name=[\"']([^\"']+)[\"']\s*>(.*?)</{_PIPE}SBML{_PIPE}invoke>",
+    re.DOTALL | re.IGNORECASE,
+)
+_SBML_PARAM = re.compile(
+    rf"<{_PIPE}SBML{_PIPE}parameter\s+name=[\"']([^\"']+)[\"']\s*>(.*?)</{_PIPE}SBML{_PIPE}parameter>",
+    re.DOTALL | re.IGNORECASE,
+)
+_SBML_TOKEN = re.compile(rf"</?{_PIPE}SBML{_PIPE}[^>]*>", re.IGNORECASE)
+
+
+def _coerce_parameter(value: str):
+    text = value.strip()
+
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+
+    if re.fullmatch(r"-?\d+\.\d+", text):
+        return float(text)
+
+    if text.lower() in ("true", "false"):
+        return text.lower() == "true"
+
+    return text
+
+
+def strip_tool_markup(content: str) -> str:
+    """本文に残ったネイティブのツール呼び出しタグを取り除く。"""
+    if not content or "SBML" not in content:
+        return content
+
+    text = _SBML_BLOCK.sub("", content)
+    text = _SBML_INVOKE.sub("", text)
+    text = _SBML_TOKEN.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def parse_text_tool_calls(content: str):
+    """本文に書かれたツール呼び出しを (tool_calls, 残りの本文) にする。"""
+    if not content or "SBML" not in content:
+        return [], content
+
+    calls = []
+
+    for index, match in enumerate(_SBML_INVOKE.finditer(content)):
+        name = match.group(1).strip()
+
+        if not name:
+            continue
+
+        arguments = {
+            param.group(1).strip(): _coerce_parameter(param.group(2))
+            for param in _SBML_PARAM.finditer(match.group(2))
+        }
+        calls.append(
+            {
+                "id": f"text-call-{index}",
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(arguments, ensure_ascii=False),
+                },
+            }
+        )
+
+    return calls, strip_tool_markup(content)
+
 
 TRANSLATION_SYSTEM_PROMPT = (
     "あなたは翻訳者です。ユーザーの本文を自然な日本語へ翻訳してください。"
@@ -392,6 +482,8 @@ class SarashinaClient:
     prompt_style = prompts.SYSTEM
     #: Sarashina はテキスト専用（画像 parts を送らない）。
     supports_images = False
+    #: OpenAI 互換の function calling に対応している（実測: tool_calls を返す）。
+    supports_tools = True
     max_completion_tokens = 8000
     retry_status = frozenset({429, 500, 502, 503, 504})
     retries = 3
@@ -632,6 +724,10 @@ class SarashinaClient:
         for message in messages:
             chars, images = prompts.content_size(message.get("content"))
             total += chars * 3 // 4 + images * prompts.IMAGE_TOKENS + 8
+            # tool_calls の引数も文脈を食う（assistant メッセージ側に付く）。
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") or {}
+                total += len(str(function.get("arguments") or "")) * 3 // 4 + 16
 
         return total
 
@@ -656,7 +752,21 @@ class SarashinaClient:
             raise ValueError("Empty translation")
         return result.strip()
 
-    async def complete(self, messages, max_tokens=768, temperature=0.5, model=None):
+    async def complete_message(
+        self,
+        messages,
+        max_tokens=768,
+        temperature=0.5,
+        model=None,
+        tools=None,
+        tool_choice=None,
+    ):
+        """1 回の補完を、content と tool_calls の両方つきで返す。
+
+        戻り値: {"content": str, "tool_calls": list, "finish_reason": str}。
+        tool_calls があるとき content は空なので、complete() のように
+        「空の応答」で例外にしない。
+        """
         chosen = model or self.model
 
         if await self.prompt_tokens(messages) + max_tokens + 64 > self.context_window:
@@ -670,16 +780,46 @@ class SarashinaClient:
         }
         if chosen != "sarashina3.2-mini-thinking":
             payload["max_completion_tokens"] = min(int(max_tokens), self.max_completion_tokens)
+        if tools:
+            payload["tools"] = list(tools)
+            payload["tool_choice"] = tool_choice or "auto"
         data = await self.post(
             "/v1/chat/completions", payload, max_wait=self.interactive_max_wait, model=chosen
         )
         choice = data["choices"][0]
-        result = choice["message"]["content"]
+        message = choice.get("message") or {}
+        content = message.get("content") or ""
+        content = content if isinstance(content, str) else ""
+        calls = message.get("tool_calls") or []
+
+        if calls:
+            # 本文にタグが混ざっていても利用者に見せない。
+            content = strip_tool_markup(content)
+        else:
+            # サーバが tool_calls へ変換しなかった場合は本文から拾う。
+            calls, content = parse_text_tool_calls(content)
+
+            if calls:
+                logger.warning(
+                    "本文のツール呼び出しを解析しました: %s", calls[0]["function"]["name"]
+                )
+
+        return {
+            "content": content,
+            "tool_calls": calls,
+            "finish_reason": choice.get("finish_reason") or "",
+        }
+
+    async def complete(self, messages, max_tokens=768, temperature=0.5, model=None):
+        message = await self.complete_message(
+            messages, max_tokens=max_tokens, temperature=temperature, model=model
+        )
+        result = message["content"]
         if not isinstance(result, str) or not result.strip():
             raise ValueError("会話モデルから空の応答が返りました。")
         suffix = (
             "\n\n（回答が長いため、ここまでの表示です。）"
-            if choice.get("finish_reason") == "length"
+            if message.get("finish_reason") == "length"
             else ""
         )
         return result.strip() + suffix
@@ -1055,6 +1195,10 @@ class SwitchableClient:
     def prompt_style(self):
         return prompts.style_of(self.inner)
 
+    @property
+    def supports_tools(self):
+        return bool(getattr(self.inner, "supports_tools", False))
+
     # --- 委譲 -----------------------------------------------------------
     async def translate(self, text):
         async with self.lease() as client:
@@ -1064,6 +1208,34 @@ class SwitchableClient:
         async with self.lease() as client:
             return await client.complete(
                 messages, max_tokens=max_tokens, temperature=temperature, model=model,
+            )
+
+    async def complete_message(
+        self,
+        messages,
+        max_tokens=768,
+        temperature=0.5,
+        model=None,
+        tools=None,
+        tool_choice=None,
+    ):
+        async with self.lease() as client:
+            call = getattr(client, "complete_message", None)
+
+            if call is None:
+                # tools 非対応のバックエンド。従来どおり文字列だけ返す。
+                text = await client.complete(
+                    messages, max_tokens=max_tokens, temperature=temperature, model=model
+                )
+                return {"content": text, "tool_calls": [], "finish_reason": "stop"}
+
+            return await call(
+                messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                model=model,
+                tools=tools,
+                tool_choice=tool_choice,
             )
 
     async def prompt_tokens(self, messages):

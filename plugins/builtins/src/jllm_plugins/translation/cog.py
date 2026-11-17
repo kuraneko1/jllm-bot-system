@@ -41,7 +41,10 @@ from jllm_plugins.restrictions.service import UserRestrictions
 class TranslationCogConfig:
     allowed_channel_ids: frozenset[int] = frozenset()
     owner_id: int = 0
+    #: オーナーと同じ管理操作（翻訳・LLM設定）を許すロール。
+    admin_role_ids: frozenset[int] = frozenset()
     session_dir: str = "data/sessions"
+    talk_any_channel: bool = False
     talk_call_suffix: str = ""
     talk_log_path: str = "data/talk_log.jsonl"
     talk_mention_gate: str = "open"
@@ -57,10 +60,21 @@ logger = logging.getLogger(__name__)
 _DEFAULT = object()
 
 
-def can_manage(user, owner_id=0):
-    return user.id == owner_id or getattr(
-        getattr(user, "guild_permissions", None), "manage_guild", False
-    )
+def can_manage(user, owner_id=0, role_ids=()):
+    """オーナー、サーバー管理権限、または管理者ロールを持つか。"""
+    if user.id == owner_id:
+        return True
+
+    if getattr(getattr(user, "guild_permissions", None), "manage_guild", False):
+        return True
+
+    allowed = set(role_ids or ())
+
+    if not allowed:
+        return False
+
+    roles = getattr(user, "roles", ()) or ()
+    return any(getattr(role, "id", None) in allowed for role in roles)
 
 
 def user_labels(users):
@@ -240,7 +254,11 @@ class TranslationView(discord.ui.View):
     async def interaction_check(self, interaction):
         if (
             interaction.user.id != self.owner_id
-            or not can_manage(interaction.user, self.cog.config.owner_id)
+            or not can_manage(
+                interaction.user,
+                self.cog.config.owner_id,
+                getattr(self.cog.config, "admin_role_ids", ()),
+            )
         ):
             await interaction.response.send_message(
                 "この設定パネルは開いた管理者だけが操作できます。", ephemeral=True
@@ -657,7 +675,9 @@ class TranslationCog(commands.Cog):
     )
     @app_commands.guild_only()
     async def translate(self, interaction: discord.Interaction):
-        if not can_manage(interaction.user, self.config.owner_id):
+        if not can_manage(
+            interaction.user, self.config.owner_id, getattr(self.config, "admin_role_ids", ())
+        ):
             await interaction.response.send_message(
                 "翻訳の設定はオーナーまたはサーバー管理権限を持つ人が変更できます。", ephemeral=True
             )
@@ -717,7 +737,9 @@ class TranslationCog(commands.Cog):
         if user.id in self.config.tts_switch_user_ids:
             return True
 
-        return can_manage(user, self.config.owner_id)
+        return can_manage(
+            user, self.config.owner_id, getattr(self.config, "admin_role_ids", ())
+        )
 
     async def _llm_guard(self, interaction) -> bool:
         if self._llm_can_switch(interaction.user):
@@ -918,6 +940,17 @@ class TranslationCog(commands.Cog):
             if len(overrides) > 10:
                 lines.append(f"　ほか {len(overrides) - 10} 件")
 
+        store = getattr(self.conversation, "search_mode", None)
+
+        if store is not None:
+            state = store.snapshot(getattr(interaction.channel, "id", None))
+            lines.append(
+                "\n検索ツール: **{}**（このチャンネル）／全体既定: **{}**".format(
+                    "ON" if state["enabled"] else "OFF",
+                    "ON" if state["default"] else "OFF",
+                )
+            )
+
         lines.append(
             "\n切替: `/llm switch`（全体）　チャンネル別: `/llm channel`　読み上げ: `/llm read`"
         )
@@ -1052,6 +1085,72 @@ class TranslationCog(commands.Cog):
         snapshot = llm_backend.snapshot()
         await self._llm_switch_to(interaction, snapshot["backend"], mode.value)
 
+    @llm_group.command(
+        name="search",
+        description="検索ツール（Web検索・ページ読み取り）の ON/OFF を切り替えます",
+    )
+    @app_commands.describe(
+        enabled="True で有効、False で無効（省略すると現在の状態を表示）",
+        channel="対象のチャンネル／スレッド（省略時はこのチャンネル）",
+        for_all="全体の既定を変える（サーバー管理権限のみ）",
+    )
+    async def llm_search(
+        self,
+        interaction: discord.Interaction,
+        enabled: bool | None = None,
+        channel: discord.TextChannel | discord.Thread | None = None,
+        for_all: bool = False,
+    ):
+        if not await self._llm_guard(interaction):
+            return
+
+        store = getattr(self.conversation, "search_mode", None)
+
+        if store is None:
+            await interaction.response.send_message(
+                "検索ツールが設定されていません（profile の feature.conversation.search）。",
+                ephemeral=True,
+            )
+            return
+
+        target = channel or interaction.channel
+        channel_id = getattr(target, "id", None)
+        supported = bool(getattr(self.client, "supports_tools", False))
+
+        if enabled is None:
+            state = store.snapshot(channel_id)
+            await interaction.response.send_message(
+                "検索ツール: **{}**（このチャンネル）\n全体既定: **{}**{}".format(
+                    "ON" if state["enabled"] else "OFF",
+                    "ON" if state["default"] else "OFF",
+                    "" if supported else "\n※ いまのモデルはツールに対応していません",
+                ),
+                ephemeral=True,
+            )
+            return
+
+        if for_all:
+            state = store.set(None, enabled)
+            note = f"検索ツールの全体既定を **{'ON' if enabled else 'OFF'}** にしました"
+        else:
+            if channel_id is None:
+                await interaction.response.send_message(
+                    "チャンネルを特定できませんでした。`channel` を指定してください。",
+                    ephemeral=True,
+                )
+                return
+
+            state = store.set(channel_id, enabled)
+            note = f"{target.mention} の検索ツールを **{'ON' if enabled else 'OFF'}** にしました"
+
+        if not supported:
+            note += "\n※ いまのモデルはツールに対応していないため、切替は保存だけされます"
+
+        await interaction.response.send_message(
+            note + f"\n全体既定: **{'ON' if state['default'] else 'OFF'}**",
+            ephemeral=True,
+        )
+
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         if member.bot or before.channel is None or after.channel is not None:
@@ -1110,17 +1209,26 @@ class TranslationCog(commands.Cog):
             else self.miq is not None and self.miq.matches_trigger(message.content)
         ):
             return
-        if (
-            message.channel.id not in self.config.allowed_channel_ids
-            and message.channel.id not in self.config.talk_open_channels
-        ):
-            return
-        # 「今北産業」だけの投稿は、直前の投稿を3行に要約して返す（会話・翻訳より先に判定）
+        # 「今北産業」だけの投稿は、チャンネルを問わず直前の投稿を3行に要約する
+        # （会話・翻訳・許可チャンネルの判定より先に処理する）。
         if self.kitasan is not None and self.kitasan.matches_trigger(message.content):
             await self.kitasan.handle(message)
             return
+        allowed_here = (
+            message.channel.id in self.config.allowed_channel_ids
+            or message.channel.id in self.config.talk_open_channels
+        )
+        if not allowed_here and not self.config.talk_any_channel:
+            return
         if self.settings.mode(message.guild.id, message.channel.id) == "talk":
             await self.enqueue_talk(message)
+            return
+        # 会話モードでないチャンネルでも、どこでも呼び出しが有効なら
+        # 呼びかけ（メンション・語尾・Botへの返信）にだけ応える。
+        # 翻訳・読み上げは許可チャンネルだけのまま（今北産業は上で処理済み）。
+        if self.config.talk_any_channel and await self.enqueue_talk(message):
+            return
+        if not allowed_here:
             return
         if not message.content.strip():
             return
@@ -1149,12 +1257,18 @@ class TranslationCog(commands.Cog):
         except asyncio.QueueFull:
             await self.warn(message, "翻訳が混み合っているため、この投稿の翻訳をスキップしました。")
 
+    def talk_channel_active(self, guild_id, channel_id):
+        """このチャンネルで会話してよいか（会話モード、またはどこでも呼び出し設定）。"""
+        if self.settings.mode(guild_id, channel_id) == "talk":
+            return True
+        return bool(self.config.talk_any_channel)
+
     def active(self, message, ticket):
         if ticket[2] == "talk":
             key = self.settings.key(message.guild.id, message.channel.id)
             return (
                 self.backend_ready
-                and self.settings.mode(message.guild.id, message.channel.id) == "talk"
+                and self.talk_channel_active(message.guild.id, message.channel.id)
                 and ticket[:2] == (key, self.settings.revisions.get(key, 0))
             )
         member = message.guild.get_member(message.author.id)
@@ -1319,10 +1433,11 @@ class TranslationCog(commands.Cog):
         return "reply", text, "reply"
 
     async def enqueue_talk(self, message):
+        """呼びかけなら会話として積む。呼びかけでなければ False を返す。"""
         invocation, text, kind = await self.talk_invocation(message)
 
         if kind is None:
-            return
+            return False
 
         author = message.author
         self.talk_log.record(
@@ -1335,7 +1450,7 @@ class TranslationCog(commands.Cog):
         )
 
         if invocation is None:
-            return
+            return True
 
         if invocation in ("call", "reply"):
             # 呼び出した本人を覚える。返信のときは会話を切らさない。
@@ -1350,17 +1465,17 @@ class TranslationCog(commands.Cog):
                     "/translate の設定パネルで再度オンにしてください。"
                 ),
             )
-            return
+            return True
         pending_key = (message.channel.id, message.author.id)
         if pending_key in self.talk_pending:
             await self.warn(
                 message, "前の依頼に回答中です。回答が終わってから次の依頼を送ってください。"
             )
-            return
+            return True
         # 本文が空でも、テキスト添付か画像添付があれば会話として通す。
         # 画像を実際に読むかは conversation.respond がバックエンドを見て決める。
         if not text and not has_source_attachment(message):
-            return
+            return True
         key = self.settings.key(message.guild.id, message.channel.id)
         reply_to = getattr(getattr(message, "reference", None), "message_id", None)
         session_id = self.resolve_session(message, reply_to)
@@ -1372,8 +1487,11 @@ class TranslationCog(commands.Cog):
             await self.warn(
                 message, "会話・要約が混み合っています。少し待ってから依頼してください。"
             )
+        return True
 
-    async def _save_session_turns(self, message, session_id, text, answer, sent_ids, sent_at=None):
+    async def _save_session_turns(
+        self, message, session_id, text, answer, sent_ids, sent_at=None, trace=None
+    ):
         """呼び出しと回答をセッションへ残し、Botの投稿を返信先として登録する。"""
         author = message.author
 
@@ -1394,6 +1512,7 @@ class TranslationCog(commands.Cog):
                 answer,
                 sent_ids[0] if sent_ids else None,
                 created_at=sent_at,
+                trace=trace,
             )
 
             for message_id in sent_ids:
@@ -1451,11 +1570,13 @@ class TranslationCog(commands.Cog):
                         history = await asyncio.to_thread(self.sessions.history, session_id)
 
                     active = partial(self.active, message, ticket)
+                    trace = []
                     async with message.channel.typing():
                         answer = await self.conversation.respond(
                             message, text, self.bot.user.id, active,
                             history=history,
                             system_prompt=session_settings.get("system_prompt") or None,
+                            trace=trace,
                         )
 
                     sent_ids, sent_at = [], None
@@ -1476,14 +1597,14 @@ class TranslationCog(commands.Cog):
 
                     if session_id and self.sessions is not None:
                         await self._save_session_turns(
-                            message, session_id, text, answer, sent_ids, sent_at
+                            message, session_id, text, answer, sent_ids, sent_at, trace=trace
                         )
                     continue
 
 
                     if session_id and self.sessions is not None:
                         await self._save_session_turns(
-                            message, session_id, text, answer, sent_ids, sent_at
+                            message, session_id, text, answer, sent_ids, sent_at, trace=trace
                         )
                     continue
                 translated = await self.client.translate(text)

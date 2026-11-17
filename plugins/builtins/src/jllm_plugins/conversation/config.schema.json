@@ -1,0 +1,82 @@
+{
+  "type": "object",
+  "properties": {
+    "state_file": {
+      "type": "string",
+      "default": "data/search_tool.json",
+      "minLength": 1
+    },
+    "search": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "endpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:29483",
+          "minLength": 1
+        },
+        "max_results": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 5
+        },
+        "max_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3
+        },
+        "timeout": {
+          "type": "number",
+          "minimum": 1,
+          "default": 8
+        },
+        "cache_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "default": 60
+        },
+        "fetch": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "default": "https://r.jina.ai",
+              "minLength": 1
+            },
+            "timeout": {
+              "type": "number",
+              "minimum": 1,
+              "default": 20
+            },
+            "max_chars": {
+              "type": "integer",
+              "minimum": 1000,
+              "default": 8000
+            },
+            "cache_seconds": {
+              "type": "number",
+              "minimum": 0,
+              "default": 600
+            },
+            "api_key_file": {
+              "type": "string",
+              "default": ""
+            },
+            "fallback_safe_fetch": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

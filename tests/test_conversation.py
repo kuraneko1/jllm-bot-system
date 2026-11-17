@@ -91,6 +91,47 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
         self.client.translate.assert_not_awaited()
         self.assertFalse(message.reply.call_args.kwargs['allowed_mentions'].everyone)
 
+    async def test_call_from_other_channel_only_when_talk_any_channel(self):
+        self.cog.enqueue_talk = AsyncMock()
+        message = self.message()
+        message.channel = SimpleNamespace(id=77)
+
+        await self.cog.on_message(message)
+        self.cog.enqueue_talk.assert_not_awaited()
+
+        with patch.object(self.cog.config, 'talk_any_channel', True):
+            await self.cog.on_message(message)
+        self.cog.enqueue_talk.assert_awaited_once()
+
+    async def test_talk_reply_works_outside_allowed_channels_when_enabled(self):
+        channel = SimpleNamespace(id=77, history=self.channel.history,
+                                  fetch_message=AsyncMock())
+        channel.typing = lambda: NullContext()
+        message = self.message()
+        message.channel = channel
+
+        await self.cog.on_message(message)
+        await asyncio.sleep(0.05)
+        message.reply.assert_not_awaited()
+
+        with patch.object(self.cog.config, 'talk_any_channel', True):
+            await self.cog.on_message(message)
+            await asyncio.wait_for(self.cog.queue.join(), 1)
+        message.reply.assert_awaited_once()
+
+    async def test_call_in_allowed_channel_without_talk_mode(self):
+        channel = SimpleNamespace(id=11, history=self.channel.history,
+                                  fetch_message=AsyncMock())
+        channel.typing = lambda: NullContext()
+        message = self.message()
+        message.channel = channel
+
+        with patch.object(self.cog.config, 'allowed_channel_ids', {10, 11}), \
+             patch.object(self.cog.config, 'talk_any_channel', True):
+            await self.cog.on_message(message)
+            await asyncio.wait_for(self.cog.queue.join(), 1)
+        message.reply.assert_awaited_once()
+
     async def test_a_bare_miq_post_gets_no_talk_reply(self):
         message = self.message(mid=150, text='miq')
         await self.cog.on_message(message)

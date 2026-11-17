@@ -16,6 +16,7 @@
     "talk_call_suffix": {"type": "string", "default": "jbot"},
     "duck_enabled": {"type": "boolean", "default": false},
     "owner_id": {"type": "integer", "default": 0, "minimum": 0},
+    "admin_role_ids": {"type": "array", "items": {"type": "integer"}, "default": []},
     "default_speaker": {"type": "integer", "default": 1},
     "mytalk_hidden_voices": {"type": "array", "items": {"type": "string"}, "default": []},
     "bookmark_reaction": {"type": "string", "default": ""},

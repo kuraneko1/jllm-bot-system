@@ -9,7 +9,9 @@ class Plugin:
         config = TranslationCogConfig(
             allowed_channel_ids=frozenset(ctx.config.get("allowed_channel_ids", [])),
             owner_id=ctx.config.get("owner_id", 0),
+            admin_role_ids=frozenset(ctx.config.get("admin_role_ids", [])),
             session_dir=str(storage.legacy_path("sessions")),
+            talk_any_channel=bool(ctx.config.get("talk_any_channel", False)),
             talk_call_suffix=ctx.config.get("talk_call_suffix", ""),
             talk_log_path=str(storage.legacy_path("talk_log.jsonl")),
             talk_mention_gate=ctx.config.get("talk_mention_gate", "open"),

@@ -3,6 +3,8 @@
   "properties": {
     "allowed_channel_ids": {"type": "array", "items": {"type": "integer"}, "default": []},
     "owner_id": {"type": "integer", "default": 0, "minimum": 0},
+    "admin_role_ids": {"type": "array", "items": {"type": "integer"}, "default": []},
+    "talk_any_channel": {"type": "boolean", "default": false},
     "talk_call_suffix": {"type": "string", "default": ""},
     "talk_mention_gate": {"type": "string", "enum": ["open", "session"], "default": "open"},
     "talk_model": {"type": "string", "default": ""},

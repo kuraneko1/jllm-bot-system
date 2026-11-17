@@ -32,7 +32,11 @@ from jllm_plugins.imagegen.service import ImageGenError
 from jllm_plugins.llm import llm_backend
 from jllm_plugins.miq.trigger import is_miq_trigger
 from jllm_plugins.playback.player import SpeechPlayer
-from jllm_plugins.speech_text import _apply_trailing_speed, _parse_pieces, parse_commands
+from jllm_plugins.speech_text import (
+    _apply_trailing_speed,
+    _parse_pieces_ex,
+    parse_commands,
+)
 from jllm_plugins.tts_lifecycle.service import switch_message
 from jllm_plugins.tts_router.router import TTSRouter
 from jllm_plugins.voice_settings.join_voice import JoinVoiceCache
@@ -156,6 +160,32 @@ async def connect_voice(channel, cls=None):
     return await channel.connect()
 
 
+def limit_kwargs(seconds, group):
+    """秒数指定があるときだけ enqueue に渡す引数（既存の呼び出し形を保つ）。"""
+    if seconds is None:
+        return {}
+
+    return {"seconds": seconds, "limit_group": group}
+
+
+def is_bot_admin(user, owner_id=0, role_ids=()) -> bool:
+    """Bot の管理操作をしてよいか（オーナー、または管理者ロール）。
+
+    Discord の「サーバー管理」権限とは独立に、読み上げ設定を触れる人を
+    ロールで指定できるようにする。
+    """
+    if owner_id and getattr(user, "id", None) == owner_id:
+        return True
+
+    allowed = set(role_ids or ())
+
+    if not allowed:
+        return False
+
+    roles = getattr(user, "roles", ()) or ()
+    return any(getattr(role, "id", None) in allowed for role in roles)
+
+
 @dataclass
 class ReaderConfig:
     allowed_channel_ids: frozenset[int] = frozenset()
@@ -169,6 +199,8 @@ class ReaderConfig:
     talk_call_suffix: str = "jbot"
     duck_enabled: bool = False
     owner_id: int = 0
+    #: オーナーと同じ管理操作を許すロール（読み上げ設定・制限など）。
+    admin_role_ids: frozenset[int] = frozenset()
     default_speaker: int = 1
     mytalk_hidden_voices: frozenset[str] = MYTALK_HIDDEN_VOICES
     bookmark_reaction: str = ""
@@ -407,6 +439,14 @@ class ReaderCog(commands.Cog):
             return restrictions
         return getattr(getattr(self, "bot", None), "restrictions", None)
 
+    def _is_admin(self, user) -> bool:
+        """オーナー、または管理者ロールを持つメンバーか（設定が無くても動く）。"""
+        return is_bot_admin(
+            user,
+            getattr(self.config, "owner_id", 0),
+            getattr(self.config, "admin_role_ids", ()),
+        )
+
     def _restricted(self, message, feature: str) -> bool:
         restrictions = self._restriction_store()
         if restrictions is None:
@@ -561,9 +601,9 @@ class ReaderCog(commands.Cog):
         guild = interaction.guild
         if guild is None:
             return
-        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+        if not self._is_admin(interaction.user):
             await interaction.response.send_message(
-                "このコマンドはオーナーだけが使えます。", ephemeral=True
+                "このコマンドはオーナーまたは管理者ロールだけが使えます。", ephemeral=True
             )
             return
         members = [
@@ -638,9 +678,9 @@ class ReaderCog(commands.Cog):
         length: int | None = None,
         clear: bool = False,
     ):
-        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+        if not self._is_admin(interaction.user):
             await interaction.response.send_message(
-                "このコマンドはオーナーだけが使えます。", ephemeral=True
+                "このコマンドはオーナーまたは管理者ロールだけが使えます。", ephemeral=True
             )
             return
         guild = interaction.guild
@@ -686,9 +726,9 @@ class ReaderCog(commands.Cog):
         speaker: str | None = None,
         clear: bool = False,
     ):
-        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+        if not self._is_admin(interaction.user):
             await interaction.response.send_message(
-                "このコマンドはオーナーだけが使えます。", ephemeral=True
+                "このコマンドはオーナーまたは管理者ロールだけが使えます。", ephemeral=True
             )
             return
         guild = interaction.guild
@@ -736,15 +776,19 @@ class ReaderCog(commands.Cog):
     @app_commands.command(
         name="resettalk", description="このサーバーの全員の話者設定をリセットします"
     )
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.guild_only()
     async def resettalk(self, interaction: discord.Interaction):
         guild = interaction.guild
         if guild is None:
             return
         member = interaction.user
-        if not (isinstance(member, discord.Member) and member.guild_permissions.manage_guild):
-            await interaction.response.send_message("サーバー管理権限が必要です。", ephemeral=True)
+        allowed = self._is_admin(member) or (
+            isinstance(member, discord.Member) and member.guild_permissions.manage_guild
+        )
+        if not allowed:
+            await interaction.response.send_message(
+                "サーバー管理権限、または管理者ロールが必要です。", ephemeral=True
+            )
             return
         prefix = f"{guild.id}:"
         removed = [key for key in self.user_voices if key.startswith(prefix)]
@@ -769,9 +813,9 @@ class ReaderCog(commands.Cog):
         guild = interaction.guild
         if guild is None:
             return
-        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+        if not self._is_admin(interaction.user):
             await interaction.response.send_message(
-                "このコマンドはオーナーだけが使えます。", ephemeral=True
+                "このコマンドはオーナーまたは管理者ロールだけが使えます。", ephemeral=True
             )
             return
         await interaction.response.defer(ephemeral=True)
@@ -948,8 +992,9 @@ class ReaderCog(commands.Cog):
         voice_speed = await self.tts_speed_for(speaker)
         base_speed = voice_speed if voice_speed is not None else self.config.default_speed
         gain = await self.tts_gain_for(speaker)
-        pieces = _parse_pieces(text, base_speed)
-        for chunk, chunk_speed, chunk_effects in pieces:
+        pieces = _parse_pieces_ex(text, base_speed)
+        for index, (chunk, chunk_speed, chunk_effects, chunk_seconds) in enumerate(pieces):
+            group = f"{post_id}:{index}" if chunk_seconds is not None else None
             for segment in self.dictionary.split(chunk):
                 if segment.kind == "sound":
                     if self.toggles["wav"]:
@@ -960,6 +1005,7 @@ class ReaderCog(commands.Cog):
                             post_id,
                             author_key,
                             effects=chunk_effects,
+                            **limit_kwargs(chunk_seconds, group),
                         )
                     elif has_readable_text(segment.text):
                         player.enqueue(
@@ -970,6 +1016,7 @@ class ReaderCog(commands.Cog):
                             author_key,
                             volume=gain,
                             effects=chunk_effects,
+                            **limit_kwargs(chunk_seconds, group),
                         )
                 elif has_readable_text(segment.value):
                     player.enqueue(
@@ -980,6 +1027,7 @@ class ReaderCog(commands.Cog):
                         author_key,
                         volume=gain,
                         effects=chunk_effects,
+                        **limit_kwargs(chunk_seconds, group),
                     )
 
     def _joined_channel(self, message) -> bool:
@@ -1072,11 +1120,11 @@ class ReaderCog(commands.Cog):
             read_text = base
             if not has_readable_text(prepare_text(base, max_length)):
                 return
-            pieces = _parse_pieces(base, self.config.default_speed)
+            pieces = _parse_pieces_ex(base, self.config.default_speed)
             pieces = _apply_trailing_speed(pieces, trailing_speed)
             sounds = [
                 segment.value
-                for chunk, _, _ in pieces
+                for chunk, _, _, _ in pieces
                 for segment in self.dictionary.split(chunk)
                 if segment.kind == "sound"
             ]
@@ -1084,7 +1132,10 @@ class ReaderCog(commands.Cog):
                 if stop_requested:
                     player.skip()
                     await self._react_skip(message)
-                for chunk, chunk_speed, chunk_effects in pieces:
+                for index, (chunk, chunk_speed, chunk_effects, chunk_seconds) in enumerate(
+                    pieces
+                ):
+                    group = f"{post_id}:{index}" if chunk_seconds is not None else None
                     for segment in self.dictionary.split(chunk):
                         if segment.kind == "sound":
                             player.enqueue_sound(
@@ -1094,6 +1145,7 @@ class ReaderCog(commands.Cog):
                                 post_id,
                                 author_key,
                                 effects=chunk_effects,
+                                **limit_kwargs(chunk_seconds, group),
                             )
                 return
         if message.author.id in player.skip_users:
@@ -1107,16 +1159,17 @@ class ReaderCog(commands.Cog):
             return
         voice_speed = await self.tts_speed_for(speaker_key)
         base_speed = voice_speed if voice_speed is not None else self.config.default_speed
-        pieces = _apply_trailing_speed(_parse_pieces(text, base_speed), trailing_speed)
+        pieces = _apply_trailing_speed(_parse_pieces_ex(text, base_speed), trailing_speed)
         if not pieces:
-            pieces = [(text, base_speed, ())]
+            pieces = [(text, base_speed, (), None)]
         if stop_requested:
             player.skip()
             await self._react_skip(message)
         gain = await self.tts_gain_for(speaker_key)
         wav_blocked = self._restricted(message, "wav")
         speak = mode in ("tts", "full")
-        for chunk, chunk_speed, chunk_effects in pieces:
+        for index, (chunk, chunk_speed, chunk_effects, chunk_seconds) in enumerate(pieces):
+            group = f"{post_id}:{index}" if chunk_seconds is not None else None
             for segment in self.dictionary.split(chunk):
                 if segment.kind == "sound":
                     if self.toggles["wav"] and not wav_blocked:
@@ -1127,6 +1180,7 @@ class ReaderCog(commands.Cog):
                             post_id,
                             author_key,
                             effects=chunk_effects,
+                            **limit_kwargs(chunk_seconds, group),
                         )
                     elif speak and has_readable_text(segment.text):
                         player.enqueue(
@@ -1137,6 +1191,7 @@ class ReaderCog(commands.Cog):
                             author_key,
                             volume=gain,
                             effects=chunk_effects,
+                            **limit_kwargs(chunk_seconds, group),
                         )
                 elif speak and has_readable_text(segment.value):
                     player.enqueue(
@@ -1147,6 +1202,7 @@ class ReaderCog(commands.Cog):
                         author_key,
                         volume=gain,
                         effects=chunk_effects,
+                        **limit_kwargs(chunk_seconds, group),
                     )
 
     @commands.Cog.listener()
@@ -1305,64 +1361,22 @@ class ReaderCog(commands.Cog):
         except discord.HTTPException:
             return None
 
-    @app_commands.command(name="help", description="読み上げの使い方を表示します")
+    @app_commands.command(name="help", description="共通ボードのURLを表示します")
     @app_commands.guild_only()
     async def help(self, interaction):
         await interaction.response.defer(ephemeral=True)
-        url = self.config.dashboard_url
-        lines = [
-            "## 読み上げBotの使い方",
-            f"[共通ボード：登録音声・辞書・GIFの閲覧／管理]({url}/)",
-            "閲覧はログイン不要。管理操作には**パスキー**が必要です（初回はログイン画面で登録）。",
-            "",
-            "### 読み上げ",
-            f"- {chr(96)}/join{chr(96)} — VCに参加して読み上げ開始",
-            "- /leave — 読み上げ停止・VC退出",
-            "- /mytalk — 自分の声・ミュートを選択し、**✅ 設定する**で確定",
-            "- /forcevoice — メンバーの声を強制変更（オーナーのみ。本人設定より優先）",
-            "- /botvoice — Bot自身の返答を読む声を設定（オーナーのみ）",
-            "- /readlength — Botの返答を読む文字数（オーナーのみ。ユーザー投稿は変わらない）",
-            "- /emoji enabled: — 👅💋の読み上げを切り替え（既定は無効）",
-            "- 投稿の先頭に ;・: — **その投稿だけ**読み上げない",
-            "- s だけ送信 — 再生中の読み上げを停止",
-            (
-                "- f<数字> で倍速、rb・ec・ecl・ch・vi・lo・bs・pi・rv・lm・wd・ph・ex・kk・tc "
-                "で音声効果"
-            ),
-            "- (この部分だけ)ec3 で括弧内だけに適用。並べると順に重ねて掛かります",
-            f"- [実験場]({url}/?tab=playground) — 好きな文章に好きな効果を付けて試せます",
-            "- /umigame — ウミガメのスープ（質問は末尾 ??、推測は末尾 !!）",
-            "",
-            "### 辞書・音声の登録",
-            f"- [ボイスレコーダー]({url}/?tab=recorder) — 録音・結合・話者登録申請",
-            "- /dict add phrase: file: — 音声を登録。管理者以外は承認申請",
-            "- /reading add trigger: reading: — 読み方を登録",
-            "- /reading remove trigger: — 登録した読み方を削除",
-            "- GIF登録 — Botをメンションし、語句とGIFを添付",
-            "",
-            "### 画像生成・管理",
-            "- /translate — 翻訳・会話設定",
-            "- /llm status / /llm switch — 翻訳・会話のモデルを切替。atmos は辞書wavのみ",
-            "- /llm read mode: — 読み上げモードだけ変更",
-            "- 会話モード：Botへのメンション／リプで質問や要約を依頼",
-            "- Web要約 — @Bot URL 要約して",
-            "- /img prompt: — 画像を生成",
-            "- /wavplay enabled: — 辞書音声再生のオン・オフ",
-            "- /imggen enabled: — 画像生成サーバーの起動・停止",
-            "- /resettalk — 全員の個別話者設定をリセット",
-            "",
-            "enabled: は True／False。/wavplay・/imggen は省略すると現在の設定を表示します。",
-        ]
-        await interaction.followup.send("\n".join(lines)[:1900], ephemeral=True)
+        url = self.config.dashboard_url.rstrip("/") + "/"
+        await interaction.followup.send(url, ephemeral=True)
 
     @app_commands.command(
         name="bookmark", description="リアクションで保存した投稿の一覧を表示します（オーナーのみ）"
     )
     @app_commands.guild_only()
     async def bookmark(self, interaction: discord.Interaction):
-        if not self.config.owner_id or interaction.user.id != self.config.owner_id:
+        if not self._is_admin(interaction.user):
             await interaction.response.send_message(
-                "ブックマークを開けるのはBotオーナーだけです。", ephemeral=True
+                "ブックマークを開けるのはオーナーまたは管理者ロールだけです。",
+                ephemeral=True,
             )
             return
         if not self.bookmark_rules:
@@ -1753,9 +1767,10 @@ class ReaderCog(commands.Cog):
 
     async def _toggle_feature(self, interaction, feature, enabled):
         label = self.TOGGLE_LABELS[feature]
-        if interaction.user.id != self.config.owner_id:
+        if not self._is_admin(interaction.user):
             await interaction.response.send_message(
-                f"{label}のオン/オフはオーナーのみ変更できます。", ephemeral=True
+                f"{label}のオン/オフはオーナーまたは管理者ロールのみ変更できます。",
+                ephemeral=True,
             )
             return
         if enabled is None:
@@ -1953,10 +1968,8 @@ class ReaderCog(commands.Cog):
                 )
                 return True
             response = await message.reply(
-                (
-                    f"<@{config.approver_id}> さん、HTML公開申請です"
-                    f"（制限超過: {len(data) / 1024 / 1024:.1f}MB）。\n"
-                ),
+                f"<@{config.approver_id}> さん、HTML公開申請です"
+                f"（制限超過: {len(data) / 1024 / 1024:.1f}MB）。\n"
                 f"タイトル: {self.pending_html[request_id]['title']}\n"
                 f"申請ID: {request_id}\n"
                 "下のボタンで公開または拒否してください。",
@@ -2120,6 +2133,7 @@ class Plugin:
             talk_call_suffix=ctx.config.get("talk_call_suffix", "jbot"),
             duck_enabled=ctx.config.get("duck_enabled", False),
             owner_id=ctx.config.get("owner_id", 0),
+            admin_role_ids=frozenset(ctx.config.get("admin_role_ids", [])),
             default_speaker=ctx.config.get("default_speaker", 1),
             mytalk_hidden_voices=frozenset(
                 ctx.config.get("mytalk_hidden_voices", [])
