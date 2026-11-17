@@ -127,6 +127,8 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
             [
                 web.get("/", self._index),
                 web.get("/static/{path:.*}", self._static_asset),
+                web.get("/manifest.webmanifest", self._manifest),
+                web.get("/sw.js", self._service_worker),
                 web.get("/recorder", self._recorder),
                 web.get("/tts-panel", self._tts_panel),
                 web.get("/favicon.svg", self._favicon),
@@ -520,6 +522,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         ".svg": "image/svg+xml; charset=utf-8",
         ".png": "image/png",
         ".json": "application/json; charset=utf-8",
+        ".webmanifest": "application/manifest+json; charset=utf-8",
     }
 
     @classmethod
@@ -630,6 +633,31 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
             return self._json_error("アイコンがありません。", 404)
 
         return web.FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
+
+    async def _manifest(self, request: web.Request) -> web.StreamResponse:
+        path = Path(__file__).with_name("static") / "manifest.webmanifest"
+        if not path.is_file():
+            return self._json_error("マニフェストがありません。", 404)
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Type": "application/manifest+json; charset=utf-8",
+                "Cache-Control": "public, max-age=3600",
+            },
+        )
+
+    async def _service_worker(self, request: web.Request) -> web.StreamResponse:
+        path = Path(__file__).with_name("static") / "sw.js"
+        if not path.is_file():
+            return self._json_error("Service Worker がありません。", 404)
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Type": "application/javascript; charset=utf-8",
+                "Cache-Control": "no-cache",
+                "Service-Worker-Allowed": "/",
+            },
+        )
 
     # -------------------------------------------------------- Webチャット
 

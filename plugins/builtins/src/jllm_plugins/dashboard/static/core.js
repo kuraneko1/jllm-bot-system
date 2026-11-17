@@ -514,6 +514,220 @@ document.addEventListener("keydown", (event) => {
 });
 mobileNav.addEventListener?.("change", placeNavChrome);
 
+// ── Theme Toggle (Dark / Light) ──
+const THEME_META_COLOR = { dark: "#101216", light: "#f3f5f7" };
+const SUN_ICON =
+  '<svg class="icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+  '<circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+  '<path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+const MOON_ICON =
+  '<svg class="icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+  '<path d="M13.2 9.8A5.4 5.4 0 0 1 6.2 2.8 5.6 5.6 0 1 0 13.2 9.8Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function applyTheme(theme, persist = true) {
+  const next = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  const meta = $("#themeColorMeta");
+  if (meta) meta.setAttribute("content", THEME_META_COLOR[next]);
+  const btn = $("#themeToggle");
+  if (btn) {
+    btn.innerHTML = next === "dark" ? `${SUN_ICON}<span>ライト</span>` : `${MOON_ICON}<span>ダーク</span>`;
+    btn.setAttribute("aria-label", next === "dark" ? "ライトモードへ切り替え" : "ダークモードへ切り替え");
+    btn.dataset.theme = next;
+  }
+  if (persist) {
+    try { localStorage.setItem("jllmTheme", next); } catch (_) {}
+  }
+  window.dispatchEvent(new CustomEvent("themechange", { detail: { theme: next } }));
+}
+
+$("#themeToggle")?.addEventListener("click", () => {
+  applyTheme(currentTheme() === "dark" ? "light" : "dark");
+});
+applyTheme(currentTheme(), false);
+
+// ── Custom Dropdowns (replaces native <select> chrome) ──
+let openSelectState = null;
+
+function closeOpenSelect(restoreFocus = false) {
+  if (!openSelectState) return;
+  const { wrap, menu, trigger } = openSelectState;
+  menu.hidden = true;
+  if (menu.parentNode !== wrap) wrap.append(menu);
+  trigger.setAttribute("aria-expanded", "false");
+  wrap.classList.remove("open");
+  if (restoreFocus) trigger.focus();
+  openSelectState = null;
+}
+
+export function enhanceSelect(select) {
+  if (!select || select.dataset.enhanced === "1") return;
+  select.dataset.enhanced = "1";
+
+  const wrap = document.createElement("div");
+  wrap.className = "cselect";
+  if (select.classList.contains("select")) wrap.classList.add("cselect-field");
+  select.parentNode.insertBefore(wrap, select);
+  select.classList.add("select-native");
+  select.tabIndex = -1;
+  select.setAttribute("aria-hidden", "true");
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "cselect-trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  const ariaLabel = select.getAttribute("aria-label");
+  if (ariaLabel) trigger.setAttribute("aria-label", ariaLabel);
+
+  const labelSpan = document.createElement("span");
+  labelSpan.className = "cselect-label";
+  const arrowSpan = document.createElement("span");
+  arrowSpan.className = "cselect-arrow";
+  arrowSpan.setAttribute("aria-hidden", "true");
+  arrowSpan.innerHTML =
+    '<svg viewBox="0 0 12 8" width="11" height="7" fill="none">' +
+    '<path d="M1.5 1.75 6 6.25l4.5-4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  trigger.append(labelSpan, arrowSpan);
+
+  const menu = document.createElement("div");
+  menu.className = "cselect-menu";
+  menu.setAttribute("role", "listbox");
+  menu.hidden = true;
+  wrap.append(trigger, select, menu);
+
+  const sync = () => {
+    const options = Array.from(select.options);
+    const active = options.find((opt) => opt.value === select.value) || options[select.selectedIndex] || options[0];
+    labelSpan.textContent = active ? active.textContent : "";
+    trigger.disabled = select.disabled;
+    menu.replaceChildren();
+    for (const opt of options) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cselect-option";
+      btn.setAttribute("role", "option");
+      const isSelected = active ? opt === active : opt.selected;
+      btn.setAttribute("aria-selected", String(isSelected));
+      btn.textContent = opt.textContent;
+      btn.disabled = opt.disabled;
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (opt.disabled) return;
+        const changed = select.value !== opt.value;
+        select.value = opt.value;
+        closeOpenSelect(true);
+        if (changed) select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      menu.append(btn);
+    }
+  };
+
+  const protoDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+  if (protoDesc?.get && protoDesc?.set) {
+    Object.defineProperty(select, "value", {
+      configurable: true,
+      get() { return protoDesc.get.call(this); },
+      set(val) {
+        protoDesc.set.call(this, val);
+        sync();
+      },
+    });
+  }
+
+  const observer = new MutationObserver(sync);
+  observer.observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "label"] });
+  select.addEventListener("change", sync);
+  sync();
+
+  const openMenu = () => {
+    if (trigger.disabled) return;
+    sync();
+    if (openSelectState && openSelectState.wrap === wrap) {
+      closeOpenSelect();
+      return;
+    }
+    closeOpenSelect();
+    document.body.append(menu);
+    menu.hidden = false;
+    wrap.classList.add("open");
+    trigger.setAttribute("aria-expanded", "true");
+
+    const rect = trigger.getBoundingClientRect();
+    const minW = Math.max(rect.width, 168);
+    menu.style.minWidth = `${Math.round(minW)}px`;
+    menu.style.maxWidth = `${Math.max(220, window.innerWidth - 16)}px`;
+    const menuH = Math.min(menu.scrollHeight || 220, 280);
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const top = spaceBelow >= Math.min(menuH, 140) || spaceBelow >= rect.top - 8
+      ? Math.min(rect.bottom + 4, window.innerHeight - menuH - 8)
+      : Math.max(8, rect.top - menuH - 4);
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8));
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(Math.max(8, top))}px`;
+
+    const current = menu.querySelector('[aria-selected="true"]');
+    current?.scrollIntoView({ block: "nearest" });
+    openSelectState = { wrap, menu, trigger };
+  };
+
+  trigger.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    openMenu();
+  });
+
+  trigger.addEventListener("keydown", (ev) => {
+    const items = () => Array.from(menu.querySelectorAll(".cselect-option:not(:disabled)"));
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      if (!openSelectState || openSelectState.wrap !== wrap) openMenu();
+      const opts = items();
+      if (!opts.length) return;
+      const curIdx = opts.findIndex((o) => o === document.activeElement || o.getAttribute("aria-selected") === "true");
+      const delta = ev.key === "ArrowDown" ? 1 : -1;
+      const next = opts[(curIdx + delta + opts.length) % opts.length];
+      next?.focus();
+    } else if (ev.key === "Escape" && openSelectState?.wrap === wrap) {
+      ev.preventDefault();
+      closeOpenSelect(true);
+    }
+  });
+
+  menu.addEventListener("keydown", (ev) => {
+    const opts = Array.from(menu.querySelectorAll(".cselect-option:not(:disabled)"));
+    const idx = opts.indexOf(document.activeElement);
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      opts[(idx + 1) % opts.length]?.focus();
+    } else if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      opts[(idx - 1 + opts.length) % opts.length]?.focus();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeOpenSelect(true);
+    }
+  });
+}
+
+export function enhanceSelects(root = document) {
+  $$("select", root).forEach(enhanceSelect);
+}
+
+document.addEventListener("pointerdown", (ev) => {
+  if (!openSelectState) return;
+  if (!openSelectState.wrap.contains(ev.target) && !openSelectState.menu.contains(ev.target)) {
+    closeOpenSelect();
+  }
+});
+document.addEventListener("scroll", (ev) => {
+  if (openSelectState && !openSelectState.menu.contains(ev.target)) closeOpenSelect();
+}, true);
+window.addEventListener("resize", () => closeOpenSelect());
+
 // ── Lazy Tab Router ──
 const ctx = {
   $,
@@ -539,6 +753,7 @@ const ctx = {
   setVoiceSettings,
   placeNavChrome,
   chooseTab,
+  enhanceSelects,
   isAuthenticated: () => state.authenticated,
   passkeyError,
 };
@@ -595,9 +810,11 @@ export async function chooseTab(name) {
     if (panel && !panel.dataset.mounted && mod.mount) {
       await mod.mount(panel, ctx);
       panel.dataset.mounted = "1";
+      enhanceSelects(panel);
     }
     if (state.activeTab === name && mod.activate) {
       await mod.activate(ctx);
+      enhanceSelects(panel);
     }
   } catch (error) {
     notice("#globalNotice", error.message || "画面を読み込めませんでした。");
@@ -703,4 +920,7 @@ $("#logoutButton").addEventListener("click", async () => {
     ? wantedTab
     : "sound";
   await chooseTab(initialTab);
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
 })();

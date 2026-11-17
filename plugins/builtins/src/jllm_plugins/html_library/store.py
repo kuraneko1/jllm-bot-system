@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 
 import asyncio
 import base64
@@ -191,90 +192,334 @@ async def capture_thumbnail(
 DASHBOARD_CSS = """
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-:root{--bg:#0b0e14;--panel:#121826;--panel2:#161d2c;--line:rgba(255,255,255,.085);
---text:#e9eefc;--muted:#8d98b4;--accent:#8aa4ff;--radius:16px;color-scheme:dark}
-body{margin:0;background:
-radial-gradient(1100px 520px at 18% -12%, #1a2340 0%, transparent 62%),
-radial-gradient(900px 500px at 92% 4%, #211a35 0%, transparent 58%), var(--bg);
-color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
--webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+:root{
+  color-scheme:dark;
+  --bg:#101216;--surface:#171a20;--surface-2:#1d2129;--sunken:#12141a;
+  --line:rgba(255,255,255,.085);--line-2:rgba(255,255,255,.17);
+  --text:#f4f4f5;--ink-2:#d4d4d8;--muted:#9ca3af;
+  --accent:#f59e0b;--accent-2:#fbbf24;--accent-ink:#171103;
+  --accent-soft:rgba(245,158,11,.13);--green:#22c55e;
+  --scroll-track:#101216;--scroll-thumb:rgba(255,255,255,.22);
+  --shadow:0 12px 30px rgba(0,0,0,.45);
+  --r-sm:4px;--r-md:6px;--r-lg:8px;
+}
+html[data-theme="light"]{
+  color-scheme:light;
+  --bg:#f3f5f7;--surface:#ffffff;--surface-2:#f8fafc;--sunken:#eef2f6;
+  --line:rgba(15,23,42,.09);--line-2:rgba(15,23,42,.18);
+  --text:#111827;--ink-2:#374151;--muted:#64748b;
+  --accent:#d97706;--accent-2:#b45309;--accent-ink:#ffffff;
+  --accent-soft:rgba(217,119,6,.11);--green:#16a34a;
+  --scroll-track:#eef2f6;--scroll-thumb:rgba(15,23,42,.22);
+  --shadow:0 12px 30px rgba(15,23,42,.12);
+}
+html{scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) var(--scroll-track)}
+*::-webkit-scrollbar{width:9px;height:9px}
+*::-webkit-scrollbar-track{background:var(--scroll-track)}
+*::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:5px;border:2px solid transparent;background-clip:content-box}
+*::-webkit-scrollbar-thumb:hover{background:var(--accent);border:2px solid transparent;background-clip:content-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);
+  font:13.5px/1.6 ui-sans-serif,system-ui,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  -webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
 a{color:inherit}
-.wrap{max-width:1200px;margin:0 auto;padding:34px 26px 90px}
-.brand{display:flex;align-items:center;gap:12px}
-.mark{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;
-background:linear-gradient(140deg,#a9bbff,#6f86e8);color:#0b0e14}
-.mark svg{width:19px;height:19px}
-.kicker{color:var(--muted);font-size:.74rem;letter-spacing:.16em;text-transform:uppercase}
-h1{font-size:clamp(1.6rem,3vw,2.15rem);margin:14px 0 8px;letter-spacing:-.02em;font-weight:680}
-.sub{color:var(--muted);margin:0;font-size:.92rem;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
-.sub b{color:var(--text);font-weight:600}
-.dot{width:4px;height:4px;border-radius:50%;background:currentColor;opacity:.5}
-.backlink{display:inline-flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;
-font-size:.82rem;font-weight:600;margin-bottom:6px;padding:5px 10px 5px 6px;border-radius:9px}
-.backlink:hover{color:var(--text);background:rgba(255,255,255,.05)}
-.backlink svg{width:15px;height:15px}
-.chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:20px}
-.chip{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;
-border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted);
-font:inherit;font-size:.84rem;cursor:pointer;transition:.16s}
-.chip:hover{color:var(--text);border-color:rgba(138,164,255,.4)}
-.chip[aria-pressed="true"]{background:linear-gradient(135deg,#cfdaff,#8aa4ff);color:#0b0e14;
-border-color:transparent;font-weight:700}
-.chip .n{font-variant-numeric:tabular-nums;opacity:.62}
-.chip .avatar{width:18px;height:18px;border-radius:50%;background:hsl(var(--h) 55% 55%)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:16px;margin-top:18px}
-.card{display:flex;flex-direction:column;border-radius:var(--radius);overflow:hidden;
-border:1px solid var(--line);background:linear-gradient(180deg,var(--panel2),var(--panel));
-text-decoration:none;color:inherit;transition:transform .18s ease,border-color .18s,box-shadow .18s}
-.card:hover{transform:translateY(-3px);border-color:rgba(138,164,255,.45);
-box-shadow:0 16px 36px rgba(0,0,0,.42)}
+:where(button,input,a,[tabindex]):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1340px;margin:0 auto;padding:18px 20px 64px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding-bottom:14px;border-bottom:1px solid var(--line)}
+.brand-row{display:flex;align-items:center;gap:10px;min-width:0}
+.mark{width:30px;height:30px;border-radius:var(--r-sm);display:grid;place-items:center;flex:none;
+  color:var(--accent);background:var(--accent-soft);border:1px solid rgba(245,158,11,.35)}
+.mark svg{width:17px;height:17px}
+.brand-text{display:flex;flex-direction:column;min-width:0}
+.kicker{color:var(--accent-2);font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+h1{font-size:19px;margin:0;font-weight:800;letter-spacing:-.02em;line-height:1.25}
+.top-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.stat-pill{display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border-radius:var(--r-sm);
+  border:1px solid var(--line);background:var(--surface);font-size:12px;color:var(--muted)}
+.stat-pill b{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);font-variant-numeric:tabular-nums}
+.stat-dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+.btn{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 11px;
+  border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--surface);
+  color:var(--ink-2);text-decoration:none;font-size:12px;font-weight:600;transition:border-color .14s,color .14s,background .14s}
+.btn:hover{border-color:var(--accent);color:var(--accent-2);background:var(--surface-2)}
+.btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-2)}
+.btn svg{width:14px;height:14px;flex:none}
+.backlink{display:inline-flex;align-items:center;gap:6px;color:var(--muted);text-decoration:none;
+  font-size:12px;font-weight:600;margin-bottom:10px;padding:4px 8px 4px 5px;border-radius:var(--r-sm);
+  border:1px solid var(--line);background:var(--surface)}
+.backlink:hover{color:var(--text);border-color:var(--accent)}
+.backlink svg{width:14px;height:14px}
+
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  margin-top:16px;padding:12px 14px;border-radius:var(--r-lg);border:1px solid var(--line);background:var(--surface)}
+.search-box{position:relative;flex:1 1 240px;min-width:180px}
+.search-box svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--muted);pointer-events:none}
+.search-input{width:100%;min-height:36px;padding:6px 10px 6px 32px;border-radius:var(--r-sm);
+  border:1px solid var(--line-2);background:var(--sunken);color:var(--text);font-size:13px}
+.search-input:focus{outline:none;border-color:var(--accent)}
+.controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cselect{position:relative;display:inline-block}
+.cselect-btn{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;min-width:148px;
+  min-height:36px;padding:0 10px;border-radius:var(--r-sm);border:1px solid var(--line-2);
+  background:var(--sunken);color:var(--text);font-size:12.5px;font-weight:600}
+.cselect-btn:hover,.cselect.open .cselect-btn{border-color:var(--accent)}
+.cselect-btn svg{width:12px;height:12px;color:var(--muted);transition:transform .14s}
+.cselect.open .cselect-btn svg{transform:rotate(180deg);color:var(--accent-2)}
+.cselect-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:60;min-width:100%;padding:4px;
+  border-radius:var(--r-md);border:1px solid var(--line-2);background:var(--surface);box-shadow:var(--shadow);
+  display:flex;flex-direction:column;gap:2px}
+.cselect-opt{width:100%;text-align:left;padding:7px 10px;border:0;border-radius:var(--r-sm);
+  background:transparent;color:var(--ink-2);font-size:12.5px;font-weight:500}
+.cselect-opt:hover{background:var(--surface-2);color:var(--text)}
+.cselect-opt[aria-selected="true"]{background:var(--accent-soft);color:var(--accent-2);font-weight:700}
+
+.view-seg{display:inline-flex;padding:2px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--sunken)}
+.view-seg button{min-height:30px;padding:0 9px;border:0;border-radius:3px;background:transparent;color:var(--muted);
+  display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600}
+.view-seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-2)}
+.view-seg svg{width:14px;height:14px}
+
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border-radius:var(--r-sm);
+  border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:12px;font-weight:600;transition:.14s}
+.chip:hover{color:var(--text);border-color:var(--line-2)}
+.chip[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-2);border-color:var(--accent)}
+.chip .n{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;opacity:.78}
+.chip .avatar{width:14px;height:14px;border-radius:3px;background:hsl(var(--h) 62% 52%)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px;margin-top:14px}
+.grid.is-list{grid-template-columns:1fr;gap:8px}
+.card{display:flex;flex-direction:column;border-radius:var(--r-lg);overflow:hidden;border:1px solid var(--line);
+  background:var(--surface);text-decoration:none;color:inherit;transition:border-color .15s,transform .15s,box-shadow .15s}
+.card:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:var(--shadow)}
 .thumb{position:relative;display:grid;place-items:center;aspect-ratio:16/10;overflow:hidden;
-background:linear-gradient(145deg,hsl(var(--h) 42% 24%),hsl(calc(var(--h) + 30) 40% 12%))}
-.thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
-object-position:top center;opacity:0;transition:opacity .35s ease;display:block}
+  background:linear-gradient(145deg,hsl(var(--h) 38% 22%),hsl(calc(var(--h) + 32) 34% 13%));border-bottom:1px solid var(--line)}
+.thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top center;
+  opacity:0;transition:opacity .3s ease,transform .25s ease;display:block}
+.card:hover .thumb img{transform:scale(1.02)}
 .thumb.has-thumb img{opacity:1}
-.thumb .badge{width:56px;height:56px;border-radius:16px}
-.thumb .badge svg{width:28px;height:28px}
+.thumb .badge{width:50px;height:50px;border-radius:var(--r-md);display:grid;place-items:center;
+  background:rgba(16,18,22,.55);color:hsl(var(--h) 85% 70%);border:1px solid rgba(255,255,255,.16)}
+.thumb .badge svg{width:26px;height:26px}
 .thumb.has-thumb .badge{display:none}
-.card-body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:7px;min-width:0}
-.card h3{margin:0;font-size:.93rem;font-weight:640;line-height:1.42;
-display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.card .meta{display:flex;align-items:center;gap:10px;min-width:0}
-.card .owner{color:var(--muted);font-size:.78rem;display:flex;align-items:center;gap:7px;
-min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card .date{margin-left:auto;flex:0 0 auto;color:var(--muted);font-size:.74rem;
-font-variant-numeric:tabular-nums;opacity:.8}
-.card .owner .avatar{width:16px;height:16px;border-radius:50%;flex:0 0 auto;
-background:linear-gradient(140deg,hsl(var(--h) 62% 58%),hsl(calc(var(--h) + 40) 60% 40%))}
-.empty{color:var(--muted);padding:40px 0;text-align:center}
-footer{margin-top:44px;color:var(--muted);font-size:.78rem;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-footer a{display:inline-flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;
-padding:6px 10px;border-radius:9px;border:1px solid var(--line)}
-footer a:hover{color:var(--text);border-color:rgba(138,164,255,.4)}
-footer a svg{width:15px;height:15px}
-@media (max-width:640px){.wrap{padding:22px 16px 70px}}
+.card-body{padding:11px 13px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.card h3{margin:0;font-size:13.5px;font-weight:700;line-height:1.4;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .meta{display:flex;align-items:center;gap:8px;min-width:0}
+.card .owner{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px;
+  min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .date{margin-left:auto;flex:0 0 auto;color:var(--muted);font-size:11.5px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.card .owner .avatar{width:14px;height:14px;border-radius:3px;flex:0 0 auto;
+  background:linear-gradient(140deg,hsl(var(--h) 65% 56%),hsl(calc(var(--h) + 35) 60% 42%))}
+
+.grid.is-list .card{flex-direction:row;align-items:center}
+.grid.is-list .thumb{width:136px;flex:0 0 auto;aspect-ratio:16/10;border-bottom:0;border-right:1px solid var(--line)}
+.grid.is-list .card-body{flex:1;padding:10px 14px}
+
+.empty{color:var(--muted);padding:36px 16px;text-align:center;border:1px dashed var(--line);border-radius:var(--r-lg);grid-column:1/-1}
+footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);
+  font-size:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+footer a{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2);text-decoration:none;
+  padding:5px 10px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface)}
+footer a:hover{color:var(--accent-2);border-color:var(--accent)}
+footer a svg{width:14px;height:14px}
+.shown-count{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+
+dialog.viewer-modal{width:min(1180px,calc(100vw - 24px));height:min(86vh,860px);padding:0;
+  border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+dialog.viewer-modal::backdrop{background:rgba(0,0,0,.72)}
+.modal-shell{display:flex;flex-direction:column;width:100%;height:100%}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;
+  border-bottom:1px solid var(--line);background:var(--surface-2)}
+.modal-title{font-weight:700;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.modal-actions{display:flex;align-items:center;gap:8px;flex:none}
+.modal-frame{flex:1;width:100%;border:0;background:#fff}
+
+@media (max-width:640px){
+  .wrap{padding:14px 12px 48px}
+  .grid.is-list .thumb{width:96px}
+}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
 
 DASHBOARD_JS = r"""
-const chips = document.getElementById('chips');
-const cards = [...document.querySelectorAll('.card')];
-const counter = document.getElementById('shown');
-if (chips) chips.addEventListener('click', (event) => {
-  const chip = event.target.closest('.chip');
-  if (!chip) return;
-  const owner = chip.dataset.owner;
-  document.querySelectorAll('.chip').forEach((item) => {
-    item.setAttribute('aria-pressed', String(item.dataset.owner === owner));
-  });
-  let shown = 0;
-  cards.forEach((card) => {
-    const ok = owner === 'all' || card.dataset.owner === owner;
-    card.hidden = !ok;
-    if (ok) shown += 1;
-  });
-  if (counter) counter.textContent = String(shown);
-});
+(() => {
+  const root = document.documentElement;
+  const themeBtn = document.getElementById('themeBtn');
+  const grid = document.getElementById('grid');
+  const chips = document.getElementById('chips');
+  const cards = [...document.querySelectorAll('.card')];
+  const counter = document.getElementById('shown');
+  const searchInput = document.getElementById('searchInput');
+  const sortWrap = document.getElementById('sortSelect');
+  const sortBtn = document.getElementById('sortBtn');
+  const sortLabel = document.getElementById('sortLabel');
+  const sortMenu = document.getElementById('sortMenu');
+  const viewBtns = [...document.querySelectorAll('[data-view-mode]')];
+  const previewToggle = document.getElementById('previewToggle');
+  const modal = document.getElementById('viewerModal');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalOpenTab = document.getElementById('modalOpenTab');
+  const modalFrame = document.getElementById('modalFrame');
+  const modalClose = document.getElementById('modalClose');
+
+  let activeOwner = 'all';
+  let activeSort = 'newest';
+  let query = '';
+  let inlinePreview = false;
+
+  function applyTheme(next, save) {
+    const t = next === 'light' ? 'light' : 'dark';
+    root.dataset.theme = t;
+    if (themeBtn) {
+      themeBtn.setAttribute('aria-label', t === 'dark' ? 'ライトモードへ切替' : 'ダークモードへ切替');
+      const label = themeBtn.querySelector('span');
+      if (label) label.textContent = t === 'dark' ? 'ライト' : 'ダーク';
+    }
+    if (save) { try { localStorage.setItem('jllmHtmlTheme', t); } catch (_) {} }
+  }
+  try {
+    applyTheme(localStorage.getItem('jllmHtmlTheme') === 'light' ? 'light' : 'dark', false);
+  } catch (_) {
+    applyTheme('dark', false);
+  }
+  if (themeBtn) {
+    themeBtn.addEventListener('click', () => {
+      applyTheme(root.dataset.theme === 'light' ? 'dark' : 'light', true);
+    });
+  }
+
+  function applyView(mode) {
+    const listMode = mode === 'list';
+    if (grid) grid.classList.toggle('is-list', listMode);
+    viewBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.viewMode === mode)));
+    try { localStorage.setItem('jllmHtmlView', mode); } catch (_) {}
+  }
+  try {
+    const savedView = localStorage.getItem('jllmHtmlView');
+    if (savedView === 'list' || savedView === 'grid') applyView(savedView);
+  } catch (_) {}
+  viewBtns.forEach((b) => b.addEventListener('click', () => applyView(b.dataset.viewMode)));
+
+  function updateList() {
+    const ordered = [...cards].sort((a, b) => {
+      const idxA = Number(a.dataset.index || 0);
+      const idxB = Number(b.dataset.index || 0);
+      if (activeSort === 'oldest') return idxB - idxA;
+      if (activeSort === 'title') return (a.dataset.title || '').localeCompare(b.dataset.title || '', 'ja');
+      if (activeSort === 'owner') {
+        const cmp = (a.dataset.owner || '').localeCompare(b.dataset.owner || '', 'ja');
+        return cmp || (idxA - idxB);
+      }
+      return idxA - idxB;
+    });
+    let shown = 0;
+    const q = query.trim().toLocaleLowerCase();
+    ordered.forEach((card) => {
+      if (grid) grid.append(card);
+      const matchOwner = activeOwner === 'all' || card.dataset.owner === activeOwner;
+      const matchQuery = !q || `${card.dataset.title || ''} ${card.dataset.owner || ''}`.toLocaleLowerCase().includes(q);
+      const ok = matchOwner && matchQuery;
+      card.hidden = !ok;
+      if (ok) shown += 1;
+    });
+    if (counter) counter.textContent = String(shown);
+    let emptyEl = document.getElementById('filterEmpty');
+    if (!shown && cards.length) {
+      if (!emptyEl && grid) {
+        emptyEl = document.createElement('p');
+        emptyEl.id = 'filterEmpty';
+        emptyEl.className = 'empty';
+        emptyEl.textContent = '条件に一致するHTMLがありません。';
+        grid.append(emptyEl);
+      }
+    } else if (emptyEl) {
+      emptyEl.remove();
+    }
+  }
+
+  if (chips) {
+    chips.addEventListener('click', (event) => {
+      const chip = event.target.closest('.chip');
+      if (!chip) return;
+      activeOwner = chip.dataset.owner || 'all';
+      document.querySelectorAll('.chip').forEach((item) => {
+        item.setAttribute('aria-pressed', String(item.dataset.owner === activeOwner));
+      });
+      updateList();
+    });
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      query = searchInput.value || '';
+      updateList();
+    });
+  }
+
+  function closeSort() {
+    if (!sortWrap || !sortMenu || !sortBtn) return;
+    sortMenu.hidden = true;
+    sortWrap.classList.remove('open');
+    sortBtn.setAttribute('aria-expanded', 'false');
+  }
+  if (sortBtn && sortMenu) {
+    sortBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = sortMenu.hidden;
+      sortMenu.hidden = !willOpen;
+      sortWrap.classList.toggle('open', willOpen);
+      sortBtn.setAttribute('aria-expanded', String(willOpen));
+    });
+    sortMenu.addEventListener('click', (e) => {
+      const opt = e.target.closest('.cselect-opt');
+      if (!opt) return;
+      activeSort = opt.dataset.sort || 'newest';
+      if (sortLabel) sortLabel.textContent = opt.textContent;
+      sortMenu.querySelectorAll('.cselect-opt').forEach((o) => {
+        o.setAttribute('aria-selected', String(o === opt));
+      });
+      closeSort();
+      updateList();
+    });
+    document.addEventListener('click', (e) => {
+      if (sortWrap && !sortWrap.contains(e.target)) closeSort();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeSort();
+    });
+  }
+
+  if (previewToggle) {
+    previewToggle.addEventListener('click', () => {
+      inlinePreview = !inlinePreview;
+      previewToggle.setAttribute('aria-pressed', String(inlinePreview));
+    });
+  }
+  if (grid && modal && modalFrame) {
+    grid.addEventListener('click', (e) => {
+      if (!inlinePreview) return;
+      const card = e.target.closest('.card');
+      if (!card) return;
+      e.preventDefault();
+      const href = card.getAttribute('href') || '#';
+      if (modalTitle) modalTitle.textContent = card.dataset.title || 'HTML Preview';
+      if (modalOpenTab) modalOpenTab.setAttribute('href', href);
+      modalFrame.src = href + (href.includes('?') ? '&' : '?') + 'embed=1';
+      modal.showModal();
+    });
+    if (modalClose) {
+      modalClose.addEventListener('click', () => {
+        modal.close();
+        modalFrame.src = 'about:blank';
+      });
+    }
+    modal.addEventListener('close', () => { modalFrame.src = 'about:blank'; });
+  }
+})();
 """
 
 
@@ -342,10 +587,12 @@ class HtmlStore:
 
     def _cards(self, records: list[dict]) -> str:
         cards = []
-        for record in records:
+        for idx, record in enumerate(records):
             site_id = html_lib.escape(record.get("site_id", ""), quote=True)
             user_id = html_lib.escape(record.get("user_id", ""), quote=True)
-            label = html_lib.escape(record.get("title", "Untitled HTML"))
+            raw_title = record.get("title", "Untitled HTML")
+            label = html_lib.escape(raw_title)
+            title_attr = html_lib.escape(raw_title, quote=True)
             name = record.get("display_name", "") or record.get("user_id", "")
             display_name = html_lib.escape(name)
             owner = html_lib.escape(name, quote=True)
@@ -360,7 +607,7 @@ class HtmlStore:
             )
             cards.append(
                 f'<a class="card" href="/users/{user_id}/{site_id}/" target="_blank" '
-                f'rel="noopener" data-owner="{owner}">'
+                f'rel="noopener" data-index="{idx}" data-owner="{owner}" data-title="{title_attr}">'
                 f'<span class="thumb" style="--h:{hue}">'
                 f'{thumb}{_badge(record.get("site_id", ""))}</span>'
                 f'<span class="card-body"><h3>{label}</h3>'
@@ -413,31 +660,91 @@ class HtmlStore:
             '<path d="M4 6h16v12H4z"/><path d="M4 10h16"/></svg>共通ボード</a>'
         )
         return f"""<!doctype html>
-<html lang="ja"><head>
+<html lang="ja" data-theme="dark"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
 <title>{safe_title}</title>
+<script>try{{var t=localStorage.getItem("jllmHtmlTheme");document.documentElement.dataset.theme=t==="light"?"light":"dark";}}catch(_){{}}</script>
 <style>{DASHBOARD_CSS}</style>
 </head><body>
 <div class="wrap">
-  <header>
-    {back}
-    <div class="brand">
+  {back}
+  <header class="topbar">
+    <div class="brand-row">
       <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
         stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M4 6h16v12H4z"/><path d="M4 10h16"/></svg></span>
-      <span class="kicker">jllm voice</span>
+      <div class="brand-text">
+        <span class="kicker">jllm voice</span>
+        <h1>{safe_title}</h1>
+      </div>
     </div>
-    <h1>{safe_title}</h1>
-    <p class="sub"><span><b>{len(records)}</b> pages</span><span class="dot"></span>
-      <span><b>{len(owners)}</b> creators</span></p>
+    <div class="top-tools">
+      <span class="stat-pill"><span class="stat-dot" aria-hidden="true"></span><b>{len(records)}</b> pages · <b>{len(owners)}</b> creators</span>
+      <button id="previewToggle" class="btn" type="button" aria-pressed="false" title="クリックでページ内モーダル表示に切替">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M1.8 5.8h12.4"/></svg>
+        <span>モーダル表示</span>
+      </button>
+      <button id="themeBtn" class="btn" type="button" aria-label="ライトモードへ切替">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5"/></svg>
+        <span>ライト</span>
+      </button>
+      {dashboard_link}
+    </div>
   </header>
+
+  <section class="toolbar" aria-label="絞り込みと並び替え">
+    <div class="search-box">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>
+      <input id="searchInput" class="search-input" type="search" placeholder="タイトル・作成者で検索…" aria-label="タイトル・作成者で検索">
+    </div>
+    <div class="controls">
+      <div class="cselect" id="sortSelect">
+        <button id="sortBtn" class="cselect-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="並び順">
+          <span id="sortLabel">新着順</span>
+          <svg viewBox="0 0 12 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 1.75 6 6.25l4.5-4.5"/></svg>
+        </button>
+        <div id="sortMenu" class="cselect-menu" role="listbox" hidden>
+          <button class="cselect-opt" type="button" role="option" data-sort="newest" aria-selected="true">新着順</button>
+          <button class="cselect-opt" type="button" role="option" data-sort="oldest" aria-selected="false">古い順</button>
+          <button class="cselect-opt" type="button" role="option" data-sort="title" aria-selected="false">タイトル順</button>
+          <button class="cselect-opt" type="button" role="option" data-sort="owner" aria-selected="false">作成者順</button>
+        </div>
+      </div>
+      <div class="view-seg" role="group" aria-label="表示形式">
+        <button type="button" data-view-mode="grid" aria-pressed="true" aria-label="グリッド表示">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+        </button>
+        <button type="button" data-view-mode="list" aria-pressed="false" aria-label="リスト表示">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="2" y="2.5" width="12" height="2.4" rx="1"/><rect x="2" y="6.8" width="12" height="2.4" rx="1"/><rect x="2" y="11.1" width="12" height="2.4" rx="1"/></svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
   {chips}
   <section class="grid" id="grid">
     {body}
   </section>
-  <footer>{dashboard_link}<span class="dot"></span>
-    <span><span id="shown">{len(records)}</span> / {len(records)} 件を表示</span></footer>
+  <footer>
+    <span>{dashboard_link}</span>
+    <span class="shown-count"><span id="shown">{len(records)}</span> / {len(records)} 件を表示</span>
+  </footer>
 </div>
+
+<dialog id="viewerModal" class="viewer-modal" aria-labelledby="modalTitle">
+  <div class="modal-shell">
+    <div class="modal-head">
+      <span id="modalTitle" class="modal-title">HTML Preview</span>
+      <div class="modal-actions">
+        <a id="modalOpenTab" class="btn" href="#" target="_blank" rel="noopener">新しいタブで開く</a>
+        <button id="modalClose" class="btn" type="button">閉じる</button>
+      </div>
+    </div>
+    <iframe id="modalFrame" class="modal-frame" title="HTML プレビュー"></iframe>
+  </div>
+</dialog>
+
 <script>{DASHBOARD_JS}</script>
 </body></html>"""
 

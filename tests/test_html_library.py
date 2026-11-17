@@ -50,6 +50,11 @@ class HtmlStoreTests(unittest.TestCase):
         self.assertIn("<svg", dashboard)
         self.assertIn('class="thumb"', dashboard)
         self.assertIn('href="/users/a/', dashboard)
+        self.assertIn('id="searchInput"', dashboard)
+        self.assertIn('id="sortSelect"', dashboard)
+        self.assertIn('id="themeBtn"', dashboard)
+        self.assertIn("::-webkit-scrollbar", dashboard)
+        self.assertIn('html[data-theme="light"]', dashboard)
         self.assertIsNone(_re.search("[\U0001F300-\U0001FAFF]", dashboard))
 
     def test_wrapper_nav_is_sticky_and_hidden_in_previews(self):

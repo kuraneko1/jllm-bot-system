@@ -1235,6 +1235,26 @@ class ListeningApiTests(ReadingDashboardTests):
         page = await (await self.client.get("/")).text()
         for removed in ("turtleTab", "webchatTab", "sessionsTab", "llmTab"):
             self.assertNotIn(removed, page)
+        self.assertIn('id="themeToggle"', page)
+        self.assertIn('rel="manifest" href="/manifest.webmanifest"', page)
+
+        css_text = await css.text()
+        self.assertIn('html[data-theme="light"]', css_text)
+        self.assertIn(".cselect-trigger", css_text)
+        self.assertIn("::-webkit-scrollbar", css_text)
+
+        manifest = await self.client.get("/manifest.webmanifest")
+        self.assertEqual(manifest.status, 200)
+        manifest_data = await manifest.json()
+        self.assertEqual(manifest_data["display"], "standalone")
+
+        sw = await self.client.get("/sw.js")
+        self.assertEqual(sw.status, 200)
+        self.assertEqual(sw.headers.get("Service-Worker-Allowed"), "/")
+
+        for icon in ("icon-192.png", "icon-512.png"):
+            icon_resp = await self.client.get(f"/static/{icon}")
+            self.assertEqual(icon_resp.status, 200, icon)
 
         blocked = await self.client.get("/static/../dashboard.py")
         self.assertEqual(blocked.status, 404)

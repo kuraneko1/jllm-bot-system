@@ -3,11 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
+  <meta id="themeColorMeta" name="theme-color" content="#101216">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>jllm voice</title>
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="alternate icon" href="/favicon.ico">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <script>try{var t=localStorage.getItem("jllmTheme");document.documentElement.dataset.theme=t==="light"?"light":"dark";}catch(_){document.documentElement.dataset.theme="dark";}</script>
   <link rel="stylesheet" href="/static/app.css?v={{ASSET_V}}">
 </head>
 <body data-admin="false" data-asset-v="{{ASSET_V}}">
@@ -24,6 +29,7 @@
     <span class="topbar-brand">jllm voice</span>
     <div id="topActions" class="top-actions">
       <span id="accessStatus" class="status">閲覧モード</span>
+      <button id="themeToggle" class="button ghost small theme-toggle" type="button" aria-label="ライト／ダークモードを切り替え"></button>
       <a id="htmlDashboardLink" class="button ghost small" data-url="{{VIEWER_URL}}" target="_blank" rel="noopener" hidden>HTMLダッシュボード</a>
       <button id="loginButton" class="button ghost small" type="button">管理者ログイン</button>
       <button id="logoutButton" class="button secondary small admin-only" type="button">ログアウト</button>

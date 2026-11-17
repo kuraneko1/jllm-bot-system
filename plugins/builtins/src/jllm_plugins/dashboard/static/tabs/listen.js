@@ -40,10 +40,11 @@ function drawCurve(panel, curve) {
   const span = curve.seconds || 30;
   const x = (ago) => width - (ago / span) * width;
   const y = (v) => height - 18 - Math.max(0, Math.min(1, v)) * (height - 40);
+  const isLight = document.documentElement.dataset.theme === "light";
   const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#f59e0b";
 
-  c2d.strokeStyle = "rgba(255,255,255,.11)";
-  c2d.fillStyle = "rgba(244,244,245,.58)";
+  c2d.strokeStyle = isLight ? "rgba(15,23,42,.10)" : "rgba(255,255,255,.11)";
+  c2d.fillStyle = isLight ? "rgba(15,23,42,.58)" : "rgba(244,244,245,.58)";
   c2d.font = "11px system-ui, sans-serif";
   c2d.lineWidth = 1;
   for (const v of [0, 0.5, 1]) {
@@ -116,11 +117,12 @@ function drawDuckEditor(panel) {
   const c2d = canvas.getContext("2d");
   c2d.setTransform(ratio, 0, 0, ratio, 0, 0);
   c2d.clearRect(0, 0, width, height);
+  const isLight = document.documentElement.dataset.theme === "light";
   const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#f59e0b";
   const pad = 34;
 
-  c2d.strokeStyle = "rgba(255,255,255,.11)";
-  c2d.fillStyle = "rgba(244,244,245,.58)";
+  c2d.strokeStyle = isLight ? "rgba(15,23,42,.10)" : "rgba(255,255,255,.11)";
+  c2d.fillStyle = isLight ? "rgba(15,23,42,.58)" : "rgba(244,244,245,.58)";
   c2d.font = "11px system-ui, sans-serif";
   c2d.lineWidth = 1;
   for (const v of [0, 0.25, 0.5, 0.75, 1]) {
@@ -358,6 +360,11 @@ export function mount(panel, ctx) {
   });
   canvas.addEventListener("pointerup", () => { duckDrag = -1; if (duckCurve) renderDuckEditor(panel, ctx); });
   window.addEventListener("resize", () => { if (duckCurve && !panel.hidden) drawDuckEditor(panel); });
+  window.addEventListener("themechange", () => {
+    if (panel.hidden) return;
+    if (duckCurve) drawDuckEditor(panel);
+    refreshListening(panel).catch(() => {});
+  });
 
   document.addEventListener("visibilitychange", () => {
     if (!panel.hidden && !document.hidden) refreshListening(panel).catch(() => {});
