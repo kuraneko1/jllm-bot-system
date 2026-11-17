@@ -237,6 +237,7 @@ body[data-admin="true"] .status::before { background: var(--accent); box-shadow:
 }
 .metric {
   position: relative;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -245,6 +246,7 @@ body[data-admin="true"] .status::before { background: var(--accent); box-shadow:
   border: 1px solid var(--line);
   border-radius: var(--r-md);
 }
+.metric > div { min-width: 0; }
 .metric::before {
   content: "";
   position: absolute;
@@ -259,7 +261,7 @@ body[data-admin="true"] .status::before { background: var(--accent); box-shadow:
 .metric:nth-child(3)::before { background: var(--info); }
 .metric-icon { width: 24px; height: 24px; display: grid; place-items: center; flex: none; color: var(--muted); }
 .metric-icon svg { width: 100%; height: 100%; }
-.metric-label { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.metric-label { font-size: 11.5px; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .metric-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 20px;
@@ -725,11 +727,23 @@ table.ov-cmd code, .ov-fx code, .ov-rules code { font-family: ui-monospace, mono
   .drawer-sec-title { margin: 0 0 6px; font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .nav-drawer .top-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 }
+@media (max-width: 900px), (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select,
+  .field,
+  .search,
+  .textarea,
+  #recorderPanel input,
+  #recorderPanel textarea {
+    font-size: 16px;
+  }
+}
 @media (max-width: 650px) {
-  .metrics { gap: 6px; }
-  .metric { padding: 8px 10px; gap: 6px; }
+  .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .metric { padding: 8px 8px 8px 11px; gap: 4px; }
   .metric-icon { display: none; }
-  .metric-label { font-size: 10.5px; }
+  .metric-label { font-size: 10px; }
   .metric-value { font-size: 16px; }
   .list-tools .cselect { flex: 1 1 calc(50% - 4px); }
   .list-tools .search { flex: 1 1 100%; }

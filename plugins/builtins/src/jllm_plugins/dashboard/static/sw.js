@@ -1,5 +1,5 @@
-const CACHE_NAME = "jllm-voice-shell-v1";
-const PRECACHE_URLS = ["/", "/favicon.svg", "/manifest.webmanifest", "/static/icon-192.png"];
+const CACHE_NAME = "jllm-voice-shell-v2";
+const PRECACHE_URLS = ["/favicon.svg", "/manifest.webmanifest", "/static/icon-192.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

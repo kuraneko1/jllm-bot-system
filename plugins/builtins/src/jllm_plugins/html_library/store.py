@@ -338,6 +338,9 @@ dialog.viewer-modal::backdrop{background:rgba(0,0,0,.72)}
 .modal-actions{display:flex;align-items:center;gap:8px;flex:none}
 .modal-frame{flex:1;width:100%;border:0;background:#fff}
 
+@media (max-width:900px),(pointer:coarse){
+  .search-input{font-size:16px}
+}
 @media (max-width:640px){
   .wrap{padding:14px 12px 48px}
   .grid.is-list .thumb{width:96px}
@@ -506,9 +509,10 @@ DASHBOARD_JS = r"""
       if (!card) return;
       e.preventDefault();
       const href = card.getAttribute('href') || '#';
+      const rawSrc = href.replace(/\/+$/, '') + '/content.html';
       if (modalTitle) modalTitle.textContent = card.dataset.title || 'HTML Preview';
       if (modalOpenTab) modalOpenTab.setAttribute('href', href);
-      modalFrame.src = href + (href.includes('?') ? '&' : '?') + 'embed=1';
+      modalFrame.src = rawSrc;
       modal.showModal();
     });
     if (modalClose) {
@@ -756,6 +760,17 @@ class HtmlStore:
 
     def rebuild_dashboards(self):
         self.html_dir.mkdir(parents=True, exist_ok=True)
+        for record in self.catalog:
+            site = self.site_dir(record)
+            if (site / "content.html").is_file():
+                self._write(
+                    site / "index.html",
+                    self.viewer_wrapper_html(
+                        record.get("title", "HTML"),
+                        record.get("user_id", ""),
+                        record.get("site_id", ""),
+                    ),
+                )
         self._write(
             self.html_dir / "index.html",
             self.dashboard_html("HTML Dashboard", list(reversed(self.catalog))),
@@ -835,71 +850,78 @@ class HtmlStore:
             )
 
     @staticmethod
-    def viewer_wrapper_html(title: str, user_id: str, site_id: str, data: bytes) -> str:
-        text = data.decode("utf-8", errors="replace")
+    def viewer_wrapper_html(
+        title: str, user_id: str, site_id: str, data: bytes = b""
+    ) -> str:
         safe_title = html_lib.escape(title)
         safe_user = html_lib.escape(user_id, quote=True)
-        style = (
-            '<style id="html-viewer-style">'
-            "#html-viewer-nav{position:sticky;top:0;z-index:2147483647;display:flex;"
-            "align-items:center;gap:4px;min-height:44px;padding:0 10px;box-sizing:border-box;"
-            "background:rgba(15,20,30,.92);color:#e9eefc;"
-            "border-bottom:1px solid rgba(255,255,255,.09);"
-            'font:13.5px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif;'
-            "backdrop-filter:blur(10px);transition:transform .22s ease,opacity .22s ease}"
-            "#html-viewer-nav.is-hidden{transform:translateY(-100%);opacity:0;pointer-events:none}"
-            "#html-viewer-nav a{display:inline-flex;align-items:center;gap:6px;color:#c3d0ff;"
-            "text-decoration:none;font-weight:600;padding:7px 9px;border-radius:9px}"
-            "#html-viewer-nav a:hover{background:rgba(255,255,255,.08);color:#eef2ff}"
-            "#html-viewer-nav a svg{width:14px;height:14px;flex:0 0 auto}"
-            "#html-viewer-nav .html-viewer-title{margin-left:8px;overflow:hidden;"
-            "text-overflow:ellipsis;white-space:nowrap;opacity:.85}"
-            "#html-viewer-nav .html-viewer-gap{flex:1}"
-            "@media (max-width:560px){#html-viewer-nav .html-viewer-title{display:none}"
-            "#html-viewer-nav a span{display:none}}"
-            "</style>"
-        )
-        nav = (
-            '<nav id="html-viewer-nav">'
-            '<a href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-            'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" '
-            'aria-hidden="true"><path d="M15 5 8 12l7 7"/>'
-            "</svg><span>HTML Dashboard</span></a>"
-            f'<a href="/users/{safe_user}/"><svg viewBox="0 0 24 24" fill="none" '
-            'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
-            'stroke-linejoin="round" aria-hidden="true">'
+        return (
+            "<!doctype html>\n"
+            '<html lang="ja"><head>\n'
+            '<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n'
+            f"<title>{safe_title}</title>\n"
+            '<style id="html-viewer-style">\n'
+            "*{box-sizing:border-box}\n"
+            "html,body{margin:0;padding:0;height:100%;background:#101216;color:#f4f4f5;"
+            'font:13px/1.3 ui-sans-serif,system-ui,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif}\n'
+            ".html-viewer-shell{display:flex;flex-direction:column;height:100dvh;width:100%;overflow:hidden}\n"
+            "#html-viewer-nav{flex:none;display:flex;align-items:center;gap:6px;min-height:42px;padding:4px 10px;"
+            "background:#171a20;color:#f4f4f5;border-bottom:1px solid rgba(255,255,255,.1)}\n"
+            "#html-viewer-nav[hidden]{display:none}\n"
+            "#html-viewer-nav a,#html-viewer-nav button{display:inline-flex;align-items:center;gap:5px;"
+            "min-height:30px;padding:0 9px;border-radius:4px;border:1px solid rgba(255,255,255,.14);"
+            "background:#1d2129;color:#d4d4d8;text-decoration:none;font:inherit;font-size:12px;font-weight:600;"
+            "cursor:pointer;white-space:nowrap}\n"
+            "#html-viewer-nav a:hover,#html-viewer-nav button:hover{border-color:#f59e0b;color:#fbbf24}\n"
+            "#html-viewer-nav svg{width:13px;height:13px;flex:none}\n"
+            "#html-viewer-nav .html-viewer-title{margin-left:4px;color:#9ca3af;overflow:hidden;"
+            "text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}\n"
+            ".html-viewer-frame{flex:1 1 auto;width:100%;height:100%;min-height:0;border:0;display:block;background:#fff}\n"
+            "#html-viewer-restore{position:fixed;top:8px;right:10px;z-index:20;display:none;"
+            "align-items:center;gap:4px;min-height:28px;padding:0 9px;border-radius:4px;"
+            "border:1px solid rgba(255,255,255,.22);background:rgba(23,26,32,.88);color:#f4f4f5;"
+            "font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}\n"
+            "#html-viewer-restore[hidden]{display:none}\n"
+            "@media (max-width:600px){#html-viewer-nav .html-viewer-title{display:none}"
+            "#html-viewer-nav a span,#html-viewer-nav button span{display:none}}\n"
+            "</style>\n"
+            "</head><body>\n"
+            '<div class="html-viewer-shell">\n'
+            '  <nav id="html-viewer-nav">\n'
+            '    <a href="/" title="HTML Dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+            'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            '<path d="M15 5 8 12l7 7"/></svg><span>HTML Dashboard</span></a>\n'
+            f'    <a href="/users/{safe_user}/" title="ユーザーページ"><svg viewBox="0 0 24 24" fill="none" '
+            'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
             '<circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-4 3.2-6 7-6s7 2 7 6"/></svg>'
-            "<span>ユーザーページ</span></a>"
-            '<span class="html-viewer-gap"></span>'
-            f'<span class="html-viewer-title">{safe_title}</span></nav>'
-        )
-        script = (
+            "<span>ユーザーページ</span></a>\n"
+            f'    <span class="html-viewer-title">{safe_title}</span>\n'
+            '    <a href="content.html" title="枠なしで直接開く"><svg viewBox="0 0 16 16" fill="none" '
+            'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            '<path d="M9.5 2.5h4v4M13.5 2.5 8 8M6.5 4H3.5a1 1 0 0 0-1 1v7.5a1 1 0 0 0 1 1H11a1 1 0 0 0 1-1v-3"/></svg>'
+            "<span>元HTMLのみ</span></a>\n"
+            '    <button id="html-viewer-hide" type="button" title="上のバーを隠す"><svg viewBox="0 0 16 16" fill="none" '
+            'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">'
+            '<path d="M4 10 8 6l4 4"/></svg><span>隠す</span></button>\n'
+            "  </nav>\n"
+            f'  <iframe class="html-viewer-frame" src="content.html" title="{safe_title}" allowfullscreen></iframe>\n'
+            "</div>\n"
+            '<button id="html-viewer-restore" type="button" hidden>バーを表示</button>\n'
             "<script>(function(){"
-            "var nav=document.getElementById('html-viewer-nav');if(!nav)return;"
+            "var nav=document.getElementById('html-viewer-nav');"
+            "var hideBtn=document.getElementById('html-viewer-hide');"
+            "var restoreBtn=document.getElementById('html-viewer-restore');"
+            "if(!nav)return;"
             "var embedded=false;try{embedded=window.self!==window.top;}catch(e){embedded=true;}"
-            "if(embedded||/[?&]embed=1(&|$)/.test(location.search)){nav.remove();return;}"
-            "var last=0;addEventListener('scroll',function(){var y=window.scrollY||0;"
-            "if(y<=6){nav.classList.remove('is-hidden');}"
-            "else if(y>last+6){nav.classList.add('is-hidden');}"
-            "else if(y<last-6){nav.classList.remove('is-hidden');}last=y;},{passive:true});"
-            "})();</script>"
+            "if(embedded||/[?&]embed=1(&|$)/.test(location.search)){nav.hidden=true;return;}"
+            "if(hideBtn&&restoreBtn){"
+            "hideBtn.addEventListener('click',function(){nav.hidden=true;restoreBtn.hidden=false;restoreBtn.style.display='inline-flex';});"
+            "restoreBtn.addEventListener('click',function(){nav.hidden=false;restoreBtn.hidden=true;restoreBtn.style.display='none';});"
+            "}"
+            "})();</script>\n"
+            "</body></html>\n"
         )
-        head = re.search(r"</head\s*>", text, flags=re.IGNORECASE)
-        if head:
-            text = text[: head.start()] + style + text[head.start() :]
-        else:
-            text = style + text
-        body = re.search(r"<body[^>]*>", text, flags=re.IGNORECASE)
-        if body:
-            text = text[: body.end()] + nav + text[body.end() :]
-        else:
-            text = nav + text
-        tail = text.rfind("</body>")
-        if tail != -1:
-            text = text[:tail] + script + text[tail:]
-        else:
-            text = text + script
-        return text
 
     def register(self, data: bytes, filename: str, author) -> str:
         request_id = uuid.uuid4().hex[:12]

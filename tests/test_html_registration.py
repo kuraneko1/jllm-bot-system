@@ -174,10 +174,13 @@ class HtmlRegistrationTests(unittest.IsolatedAsyncioTestCase):
         rendered = (site / 'index.html').read_text()
         self.assertEqual(rendered.count('<style id="html-viewer-style">'), 1)
         self.assertIn('<nav id="html-viewer-nav">', rendered)
-        self.assertIn('こんにちは', rendered)
+        self.assertIn('src="content.html"', rendered)
+        self.assertNotIn('こんにちは', rendered)
         self.assertFalse(self.cog.pending_html)
 
-    def test_wrapper_without_body_includes_style_only_once(self):
+    def test_wrapper_embeds_content_without_modifying_source_html(self):
         rendered = self.cog._viewer_wrapper_html('Title', '99', 'abc', b'<p>Hi</p>')
         self.assertEqual(rendered.count('<style id="html-viewer-style">'), 1)
         self.assertIn('<nav id="html-viewer-nav">', rendered)
+        self.assertIn('src="content.html"', rendered)
+        self.assertNotIn('<p>Hi</p>', rendered)

@@ -61,11 +61,11 @@ class HtmlStoreTests(unittest.TestCase):
         wrapped = HtmlStore.viewer_wrapper_html(
             "T", "1", "s", b"<html><body><p>x</p></body></html>"
         )
-        self.assertIn("position:sticky", wrapped)
         self.assertIn("window.self!==window.top", wrapped)
         self.assertIn("embed=1", wrapped)
         self.assertIn("html-viewer-nav", wrapped)
-        self.assertLess(wrapped.index("html-viewer-nav"), wrapped.index("<p>x</p>"))
+        self.assertIn('<iframe class="html-viewer-frame" src="content.html"', wrapped)
+        self.assertNotIn("<p>x</p>", wrapped)
 
     def test_reject_and_expire_remove_pending(self):
         with __import__("tempfile").TemporaryDirectory() as temp:
