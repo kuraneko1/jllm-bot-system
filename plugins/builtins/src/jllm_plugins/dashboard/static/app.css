@@ -270,6 +270,7 @@ body[data-admin="true"] .status::before { background: var(--accent); box-shadow:
 
 /* ── Layout, Cards, Forms, Buttons ── */
 .grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(270px, 0.85fr); gap: 16px; align-items: start; }
+.grid > *, .workspace > *, #recorderPanel .rec-layout > * { min-width: 0; }
 .side { display: grid; gap: 14px; }
 .card, .editor-content, .login-card {
   background: var(--surface);
@@ -322,13 +323,15 @@ body[data-admin="true"] .status::before { background: var(--accent); box-shadow:
   padding: 0 !important;
   border: 0 !important;
 }
-.cselect { position: relative; display: inline-flex; width: 100%; min-width: 0; }
+.cselect { position: relative; display: inline-flex; width: 100%; max-width: 100%; min-width: 0; }
 .cselect-trigger {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 38px;
   padding: 7px 11px;
   border: 1px solid var(--line-2);
@@ -563,14 +566,14 @@ audio { width: 100%; margin-top: 6px; }
 .password-area { padding: 14px 16px; }
 .password-area summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
 
-.asset-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.asset-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 16px; border-top: 1px solid var(--line); }
 .asset-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tts-rows { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; }
-.tts-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.tts-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
 .tts-row[data-active="true"] { border-color: var(--accent); background: var(--accent-soft); }
-.tts-row .tts-text { flex: 1; min-width: 0; }
+.tts-row .tts-text { flex: 1 1 180px; min-width: 0; }
 .tts-row .tts-name { font-weight: 700; font-size: 13.5px; }
-.tts-row .tts-meta { font-size: 11.5px; color: var(--muted); }
+.tts-row .tts-meta { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
 .tts-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line-2); flex: none; }
 .tts-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(34, 197, 94, 0.5); }
 .tts-dot.ng { background: var(--danger); }
@@ -617,7 +620,7 @@ audio { width: 100%; margin-top: 6px; }
 #playgroundPanel .pg-chip.on { border-color: var(--accent); background: var(--accent-soft); }
 #playgroundPanel .pg-chip-code { padding: 2px 5px; border-radius: 3px; background: var(--sunken); color: var(--accent-2); font-family: ui-monospace, monospace; font-weight: 700; font-size: 11.5px; }
 #playgroundPanel .pg-example { padding: 4px 10px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--sunken); font-size: 12px; font-weight: 600; }
-#playgroundPanel .pg-run-row { display: flex; align-items: center; gap: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+#playgroundPanel .pg-run-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
 #playgroundPanel .pg-run { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 20px; border: 0; border-radius: var(--r-sm); background: var(--accent); color: var(--accent-ink); font-weight: 700; }
 #playgroundPanel .pg-result { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--accent); border-radius: var(--r-md); background: var(--accent-soft); }
 #playgroundPanel .pg-rules, #playgroundPanel .pg-facts { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -651,13 +654,14 @@ audio { width: 100%; margin-top: 6px; }
 #recorderPanel .btn-stop { background: var(--ink); color: var(--bg); border: 0; border-radius: var(--r-sm); padding: 9px 14px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 #recorderPanel .btn-stop:disabled { display: none; }
 #recorderPanel .timer { margin-left: auto; font-family: ui-monospace, monospace; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-#recorderPanel .part-nav { display: flex; justify-content: space-between; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+#recorderPanel .part-nav { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 #recorderPanel .part-nav button, #recorderPanel .rec-setup button, #recorderPanel .btn-combine { padding: 8px 13px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-2); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
 #recorderPanel .btn-combine:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 #recorderPanel .rec-drop { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 10px; padding: 26px; border: 2px dashed var(--accent); border-radius: var(--r-md); background: var(--accent-soft); text-align: center; cursor: pointer; }
 #recorderPanel .row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 #recorderPanel input, #recorderPanel textarea, #recorderPanel select { width: 100%; border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 8px 10px; margin: 4px 0 10px; background: var(--sunken); color: var(--ink); }
 #recorderPanel .cselect { margin: 4px 0 10px; }
+#recorderPanel .row > .cselect { flex: 1 1 180px; width: auto; min-width: 0; margin: 0; }
 #recorderPanel label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
 #recorderPanel .hint, #recorderPanel .vstatus { font-size: 12px; color: var(--muted); }
 #recorderPanel button svg, #recorderPanel .btn-dl svg { width: 14px; height: 14px; flex: none; }
@@ -699,7 +703,6 @@ table.ov-cmd code, .ov-fx code, .ov-rules code { font-family: ui-monospace, mono
   .ov-diagram { grid-template-columns: 1fr; gap: 10px; }
   .ov-flows { flex-direction: row; }
   .ov-flow .ov-arrow { display: inline-block; transform: rotate(90deg); }
-  .metrics { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
   .shell { width: calc(100% - 24px); }
@@ -723,6 +726,16 @@ table.ov-cmd code, .ov-fx code, .ov-rules code { font-family: ui-monospace, mono
   .nav-drawer .top-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 }
 @media (max-width: 650px) {
-  #soundRows[data-columns="3"], #soundRows[data-columns="4"] { --sound-columns: 2; }
+  .metrics { gap: 6px; }
+  .metric { padding: 8px 10px; gap: 6px; }
+  .metric-icon { display: none; }
+  .metric-label { font-size: 10.5px; }
+  .metric-value { font-size: 16px; }
+  .list-tools .cselect { flex: 1 1 calc(50% - 4px); }
+  .list-tools .search { flex: 1 1 100%; }
+  #soundRows,
+  #soundRows[data-columns="2"],
+  #soundRows[data-columns="3"],
+  #soundRows[data-columns="4"] { --sound-columns: 1; }
   .form-row, #playgroundPanel .pg-controls { grid-template-columns: 1fr; }
 }

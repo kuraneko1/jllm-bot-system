@@ -260,14 +260,14 @@ h1{font-size:19px;margin:0;font-weight:800;letter-spacing:-.02em;line-height:1.2
   border:1px solid var(--line-2);background:var(--sunken);color:var(--text);font-size:13px}
 .search-input:focus{outline:none;border-color:var(--accent)}
 .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.cselect{position:relative;display:inline-block}
-.cselect-btn{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;min-width:148px;
+.cselect{position:relative;display:inline-block;max-width:100%}
+.cselect-btn{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;min-width:148px;max-width:100%;
   min-height:36px;padding:0 10px;border-radius:var(--r-sm);border:1px solid var(--line-2);
   background:var(--sunken);color:var(--text);font-size:12.5px;font-weight:600}
 .cselect-btn:hover,.cselect.open .cselect-btn{border-color:var(--accent)}
 .cselect-btn svg{width:12px;height:12px;color:var(--muted);transition:transform .14s}
 .cselect.open .cselect-btn svg{transform:rotate(180deg);color:var(--accent-2)}
-.cselect-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:60;min-width:100%;padding:4px;
+.cselect-menu{position:absolute;left:0;top:calc(100% + 4px);z-index:60;min-width:100%;padding:4px;
   border-radius:var(--r-md);border:1px solid var(--line-2);background:var(--surface);box-shadow:var(--shadow);
   display:flex;flex-direction:column;gap:2px}
 .cselect-opt{width:100%;text-align:left;padding:7px 10px;border:0;border-radius:var(--r-sm);
