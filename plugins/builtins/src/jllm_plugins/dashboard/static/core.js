@@ -178,7 +178,7 @@ const fmtSec = (sec) => {
   return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 };
 
-const WAVE_BARS = 24;
+const WAVE_BARS = 18;
 
 function waveformHeights(seedText) {
   let hash = 2166136261;

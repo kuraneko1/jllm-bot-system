@@ -520,9 +520,9 @@ body[data-admin="true"] .sound-file { padding-top: 22px; }
 .ap-btn.playing .ap-ico-play { display: none; }
 .ap-btn.playing .ap-ico-pause { display: block; }
 
-.ap-wave { position: relative; height: 28px; display: flex; align-items: center; padding: 2px 4px; border-radius: var(--r-sm); background: var(--wave-bg); border: 1px solid var(--line); }
+.ap-wave { position: relative; min-width: 0; overflow: hidden; height: 28px; display: flex; align-items: center; padding: 2px 5px; border-radius: var(--r-sm); background: var(--wave-bg); border: 1px solid var(--line); }
 .ap-wave-bars { display: flex; align-items: center; justify-content: space-between; gap: 2px; width: 100%; height: 20px; pointer-events: none; }
-.ap-bar { flex: 1; min-width: 2px; border-radius: 1px; background: var(--bar-idle); transform-origin: center; transition: background-color 120ms linear; }
+.ap-bar { flex: 1; min-width: 1px; border-radius: 1px; background: var(--bar-idle); transform-origin: center; transition: background-color 120ms linear; }
 .ap-bar.active { background: var(--accent); }
 .aplayer.playing .ap-bar.active { background: var(--green); }
 .aplayer.playing .ap-bar { animation: wave-pulse 680ms ease-in-out infinite alternate; animation-delay: var(--bar-delay, 0ms); }
