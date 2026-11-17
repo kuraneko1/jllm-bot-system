@@ -1413,7 +1413,7 @@ table.ov-cmd td em { font-style:normal; color:var(--muted); }
     <button id="navToggle" class="nav-toggle" type="button" aria-label="メニューを開く" aria-expanded="false" aria-controls="navDrawer"><svg class="icon" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><path d="M3 5.5h14M3 10h14M3 14.5h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
     <div class="desktop-brand"><a class="brand" href="/" aria-label="jllm voice ホーム" style="color:inherit;text-decoration:none"><span class="brand-mark"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M3 18v5M11 10v20M20 4v32M29 12v16M37 17v7" stroke="url(#brandPrism)" stroke-width="3.5" stroke-linecap="round"/><defs><linearGradient id="brandPrism"><stop stop-color="#ddb2bd"/><stop offset=".3" stop-color="#e6d2a5"/><stop offset=".65" stop-color="#add4cc"/><stop offset="1" stop-color="#abc5e2"/></linearGradient></defs></svg></span>jllm voice</a></div>
     <span class="topbar-brand">jllm voice</span>
-    <div id="topActions" class="top-actions"><span id="accessStatus" class="status">閲覧モード</span><button id="loginButton" class="button ghost small" type="button">管理者ログイン</button><button id="logoutButton" class="button secondary small admin-only" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 3H3v14h5M7 10h10m-4-4 4 4-4 4"/></svg>ログアウト</button></div>
+    <div id="topActions" class="top-actions"><span id="accessStatus" class="status">閲覧モード</span><a id="htmlDashboardLink" class="button ghost small" data-url="{{VIEWER_URL}}" target="_blank" rel="noopener" hidden>HTMLダッシュボード</a><button id="loginButton" class="button ghost small" type="button">管理者ログイン</button><button id="logoutButton" class="button secondary small admin-only" type="button"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 3H3v14h5M7 10h10m-4-4 4 4-4 4"/></svg>ログアウト</button></div>
   </header>
 
   <div id="navBackdrop" class="nav-backdrop"></div>
@@ -1682,7 +1682,7 @@ table.ov-cmd td em { font-style:normal; color:var(--muted); }
           <div class="ov-row"><code>vi</code><span>ビブラート（声の揺れ。数字＝速さと深さ）</span></div>
           <div class="ov-row"><code>lo</code><span>ローファイ（潰れた音＋電話・ラジオ風。数字＝潰し具合と帯域）</span></div>
           <div class="ov-row"><code>bs</code><span>重低音（低音増強。数字＝dB相当）</span></div>
-          <div class="ov-row"><code>pi</code><span>ピッチ（声の高さ。数字＝半音。<code>pi4</code> で +4半音）</span></div>
+          <div class="ov-row"><code>pi</code><span>ピッチ（声の高さ。数字＝半音。<code>pi4</code> で +4半音、<code>pi-3</code> / <code>-pi3</code> で -3半音）</span></div>
           <div class="ov-row"><code>rv</code><span>逆再生（数字は無視）</span></div>
           <div class="ov-row"><code>lm</code><span>ラウド（音圧上げ。数字＝圧縮の強さ）</span></div>
           <div class="ov-row"><code>wd</code><span>広がり（Haas効果で左右に広げる。数字＝強さ）</span></div>
@@ -3371,6 +3371,17 @@ table.ov-cmd td em { font-style:normal; color:var(--muted); }
         await refreshReadings();
         notice("#globalNotice", `「${trigger}」を削除しました。`, "success");
       } catch (error) { notice("#globalNotice", error.message); }
+    }
+
+    /* HTMLダッシュボード（html-library のビューア）へのリンク。
+       設定 viewer_url があるときだけ出す。 */
+    const htmlDashboardLink = $("#htmlDashboardLink");
+    if (htmlDashboardLink) {
+      const htmlDashboardUrl = String(htmlDashboardLink.dataset.url || "").trim();
+      if (/^https?:\/\//.test(htmlDashboardUrl)) {
+        htmlDashboardLink.href = htmlDashboardUrl.replace(/\/+$/, "") + "/";
+        htmlDashboardLink.hidden = false;
+      }
     }
 
     /* ── モバイル: ハンバーガーメニュー（ドロワー）──

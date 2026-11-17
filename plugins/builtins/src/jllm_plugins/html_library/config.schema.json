@@ -8,7 +8,9 @@
     "dashboard_url": {"type": "string", "default": "http://127.0.0.1:8765", "minLength": 1},
     "max_bytes": {"type": "integer", "default": 52428800, "minimum": 1},
     "require_approval": {"type": "boolean", "default": true},
-    "approver_id": {"type": "integer", "default": 0, "minimum": 0}
+    "approver_id": {"type": "integer", "default": 0, "minimum": 0},
+    "thumbnail": {"type": "boolean", "default": true},
+    "chrome": {"type": "string", "default": ""}
   },
   "additionalProperties": false
 }

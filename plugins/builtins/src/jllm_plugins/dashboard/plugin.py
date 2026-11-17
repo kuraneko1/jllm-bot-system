@@ -17,6 +17,7 @@ class Plugin:
             webchat_dir=ctx.config.get("webchat_dir", str(storage.legacy_path("webchat"))),
             webchat_max_text=ctx.config.get("webchat_max_text", 2000),
             webchat_per_ip=ctx.config.get("webchat_per_ip", 12),
+            viewer_url=ctx.config.get("viewer_url", ""),
         )
         self.dashboard = ReadingDashboard(
             ctx.dependencies["dictionary.reading"],

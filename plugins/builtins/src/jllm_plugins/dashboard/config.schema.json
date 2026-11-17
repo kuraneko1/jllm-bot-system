@@ -14,7 +14,8 @@
     "turtle_soup_max_questions": {"type": "integer", "default": 100, "minimum": 1},
     "turtle_soup_per_ip": {"type": "integer", "default": 60, "minimum": 1},
     "webchat_max_text": {"type": "integer", "default": 2000, "minimum": 1},
-    "webchat_per_ip": {"type": "integer", "default": 12, "minimum": 1}
+    "webchat_per_ip": {"type": "integer", "default": 12, "minimum": 1},
+    "viewer_url": {"type": "string", "default": ""}
   },
   "additionalProperties": false
 }

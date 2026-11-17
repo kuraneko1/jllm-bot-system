@@ -32,6 +32,8 @@ class DashboardConfig:
     webchat_dir: str = "data/webchat"
     webchat_max_text: int = 2000
     webchat_per_ip: int = 12
+    #: 生成HTMLのダッシュボード（html-library のビューア）。空ならリンクを出さない。
+    viewer_url: str = ""
 from jllm_tts import TTSBackendError
 
 from jllm_plugins.audio_effects import EFFECTS
@@ -504,7 +506,15 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
 
     async def _index(self, request: web.Request) -> web.StreamResponse:
         page = Path(__file__).with_name("dashboard.html")
-        return web.FileResponse(page, headers={"Cache-Control": "no-store"})
+        # HTMLダッシュボードへのリンクだけ、設定値を埋め込んで返す。
+        html = page.read_text(encoding="utf-8").replace(
+            "{{VIEWER_URL}}", self.config.viewer_url or ""
+        )
+        return web.Response(
+            text=html,
+            content_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
 
     async def _tts_panel(self, request: web.Request) -> web.StreamResponse:
         """読み上げエンジンと配信方式だけを触る小さな画面（API はログイン必須）。"""

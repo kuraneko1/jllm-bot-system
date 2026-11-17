@@ -27,6 +27,41 @@ class HtmlStoreTests(unittest.TestCase):
             self.assertIn("html-viewer-nav", wrapper)
             self.assertIn("Example", wrapper)
 
+    def test_dashboard_lists_titles_owners_and_svg_icons(self):
+        import re as _re
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            store = HtmlStore(LocalStorage(temp), HtmlConfig(require_approval=False))
+            for key, title in (("a", "First page"), ("b", "Second page")):
+                store.publish(
+                    store.register(
+                        f"<title>{title}</title>".encode(),
+                        f"{key}.html",
+                        SimpleNamespace(id=key, display_name=f"user-{key}"),
+                    )
+                )
+            dashboard = (store.html_dir / "index.html").read_text()
+        self.assertIn('<div class="chips" id="chips">', dashboard)
+        self.assertIn('data-owner="user-a"', dashboard)
+        self.assertIn("First page", dashboard)
+        self.assertIn("user-b", dashboard)
+        self.assertIn('class="badge"', dashboard)
+        self.assertIn("<svg", dashboard)
+        self.assertIn('class="thumb"', dashboard)
+        self.assertIn('href="/users/a/', dashboard)
+        self.assertIsNone(_re.search("[\U0001F300-\U0001FAFF]", dashboard))
+
+    def test_wrapper_nav_is_sticky_and_hidden_in_previews(self):
+        wrapped = HtmlStore.viewer_wrapper_html(
+            "T", "1", "s", b"<html><body><p>x</p></body></html>"
+        )
+        self.assertIn("position:sticky", wrapped)
+        self.assertIn("window.self!==window.top", wrapped)
+        self.assertIn("embed=1", wrapped)
+        self.assertIn("html-viewer-nav", wrapped)
+        self.assertLess(wrapped.index("html-viewer-nav"), wrapped.index("<p>x</p>"))
+
     def test_reject_and_expire_remove_pending(self):
         with __import__("tempfile").TemporaryDirectory() as temp:
             store = HtmlStore(LocalStorage(temp), HtmlConfig())

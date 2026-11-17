@@ -1203,3 +1203,19 @@ class ListeningApiTests(ReadingDashboardTests):
         self.assertNotIn("--bg:", css)
         self.assertNotIn("--panel:", css)
         self.assertNotIn("color-scheme", css)
+
+
+class ViewerLinkTests(unittest.IsolatedAsyncioTestCase):
+    def dashboard(self, viewer_url):
+        dashboard = object.__new__(ReadingDashboard)
+        dashboard.config = DashboardConfig(viewer_url=viewer_url)
+        return dashboard
+
+    async def test_viewer_url_is_injected(self):
+        response = await self.dashboard("https://example.com/html")._index(None)
+        self.assertIn('data-url="https://example.com/html"', response.text)
+        self.assertNotIn("{{VIEWER_URL}}", response.text)
+
+    async def test_link_is_hidden_without_viewer_url(self):
+        response = await self.dashboard("")._index(None)
+        self.assertIn('data-url=""', response.text)
