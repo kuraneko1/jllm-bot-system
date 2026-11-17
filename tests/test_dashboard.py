@@ -1227,11 +1227,14 @@ class ListeningApiTests(ReadingDashboardTests):
 
         for name in (
             "sounds.js", "overview.js", "readings.js", "gifs.js", "voices.js",
-            "recorder.js", "playground.js", "turtle.js", "llm.js", "webchat.js",
-            "sessions.js", "requests.js", "listen.js",
+            "recorder.js", "playground.js", "requests.js", "listen.js",
         ):
             mod = await self.client.get(f"/static/tabs/{name}")
             self.assertEqual(mod.status, 200, name)
+
+        page = await (await self.client.get("/")).text()
+        for removed in ("turtleTab", "webchatTab", "sessionsTab", "llmTab"):
+            self.assertNotIn(removed, page)
 
         blocked = await self.client.get("/static/../dashboard.py")
         self.assertEqual(blocked.status, 404)

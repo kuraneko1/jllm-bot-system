@@ -7,10 +7,10 @@ export const VOL_ICON_SVG =
   '<path d="M10.2 5.2a4 4 0 0 1 0 5.6M12 3.4a6.6 6.6 0 0 1 0 9.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
 
 const TABS = [
-  "sound", "overview", "reading", "gif", "voice", "recorder",
-  "playground", "turtle", "llm", "webchat", "sessions", "requests", "listen",
+  "sound", "overview", "reading", "gif", "voice",
+  "recorder", "playground", "requests", "listen",
 ];
-const ADMIN_TABS = new Set(["voice", "webchat", "requests", "llm"]);
+const ADMIN_TABS = new Set(["voice", "requests"]);
 
 const state = {
   authenticated: false,
@@ -178,6 +178,27 @@ const fmtSec = (sec) => {
   return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 };
 
+const WAVE_BARS = 24;
+
+function waveformHeights(seedText) {
+  let hash = 2166136261;
+  for (let i = 0; i < seedText.length; i += 1) {
+    hash ^= seedText.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const bars = [];
+  for (let i = 0; i < WAVE_BARS; i += 1) {
+    hash ^= hash << 13;
+    hash ^= hash >>> 17;
+    hash ^= hash << 5;
+    const envelope = Math.sin(((i + 0.5) / WAVE_BARS) * Math.PI);
+    const jitter = (hash >>> 0) / 4294967295;
+    const pct = Math.round(22 + (0.35 + 0.65 * envelope) * (25 + jitter * 48));
+    bars.push(Math.min(96, Math.max(20, pct)));
+  }
+  return bars;
+}
+
 export function createMiniPlayer(src, label, initialVolume = 1.0) {
   const wrap = document.createElement("div");
   wrap.className = "aplayer";
@@ -196,6 +217,21 @@ export function createMiniPlayer(src, label, initialVolume = 1.0) {
     '<svg class="ap-ico-play" width="12" height="12" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5 12 7 3 12.5Z" fill="currentColor"/></svg>' +
     '<svg class="ap-ico-pause" width="12" height="12" viewBox="0 0 14 14" aria-hidden="true"><path d="M4 2v10M10 2v10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>';
 
+  const wave = document.createElement("div");
+  wave.className = "ap-wave";
+
+  const barsWrap = document.createElement("div");
+  barsWrap.className = "ap-wave-bars";
+  barsWrap.setAttribute("aria-hidden", "true");
+  const bars = waveformHeights(src).map((pct, idx) => {
+    const bar = document.createElement("span");
+    bar.className = "ap-bar";
+    bar.style.height = `${pct}%`;
+    bar.style.setProperty("--bar-delay", `${(idx % 6) * 90}ms`);
+    barsWrap.append(bar);
+    return bar;
+  });
+
   const scrub = document.createElement("input");
   scrub.type = "range";
   scrub.className = "ap-scrub";
@@ -203,6 +239,7 @@ export function createMiniPlayer(src, label, initialVolume = 1.0) {
   scrub.max = "1000";
   scrub.value = "0";
   scrub.setAttribute("aria-label", `${label}の再生位置`);
+  wave.append(barsWrap, scrub);
 
   const time = document.createElement("span");
   time.className = "ap-time";
@@ -215,9 +252,14 @@ export function createMiniPlayer(src, label, initialVolume = 1.0) {
   const paint = () => {
     const d = Number.isFinite(audio.duration) ? audio.duration : 0;
     const c = audio.currentTime || 0;
-    scrub.value = d > 0 ? String(Math.round((c / d) * 1000)) : "0";
+    const ratio = d > 0 ? Math.min(1, Math.max(0, c / d)) : 0;
+    scrub.value = String(Math.round(ratio * 1000));
     time.textContent = `${fmtSec(c)} / ${d > 0 ? fmtSec(d) : "--:--"}`;
-    btn.classList.toggle("playing", !audio.paused);
+    const activeCount = ratio > 0 ? Math.max(1, Math.round(ratio * WAVE_BARS)) : 0;
+    bars.forEach((bar, i) => bar.classList.toggle("active", i < activeCount));
+    const isPlaying = !audio.paused;
+    wrap.classList.toggle("playing", isPlaying);
+    btn.classList.toggle("playing", isPlaying);
     btn.setAttribute("aria-label", `${label}を${audio.paused ? "再生" : "一時停止"}`);
   };
 
@@ -248,7 +290,7 @@ export function createMiniPlayer(src, label, initialVolume = 1.0) {
     err.hidden = false;
   });
 
-  wrap.append(btn, scrub, time, err, audio);
+  wrap.append(btn, wave, time, err, audio);
   return { root: wrap, audio };
 }
 
@@ -437,18 +479,11 @@ const navHome = [
   navTabs ? { node: navTabs, parent: navTabs.parentNode, next: navTabs.nextSibling } : null,
   navActions ? { node: navActions, parent: navActions.parentNode, next: navActions.nextSibling } : null,
 ].filter(Boolean);
-const chatSideHomes = new WeakMap();
 
 function restoreNavHome() {
   for (const item of navHome) {
     if (item.node.parentNode !== item.parent) item.parent.insertBefore(item.node, item.next);
   }
-  $$("section.chat-panel").forEach((panel) => {
-    const home = chatSideHomes.get(panel);
-    if (home && home.side.parentNode !== home.layout) {
-      home.layout.insertBefore(home.side, home.main);
-    }
-  });
 }
 
 function setNavOpen(open) {
@@ -462,34 +497,18 @@ function closeNav() {
 }
 
 export function placeNavChrome() {
-  const section = $("#drawerChat");
   restoreNavHome();
   if (!mobileNav.matches) {
-    section.hidden = true;
     setNavOpen(false);
     return;
   }
   $("#drawerTabsSlot").append(navTabs);
   $("#drawerActionsSlot").append(navActions);
-  const panel = $("section.chat-panel:not([hidden])");
-  const side = panel ? $(".chat-side", panel) : null;
-  const layout = panel ? $(".chat-layout", panel) : null;
-  const main = panel ? $(".chat-main", panel) : null;
-  if (panel && side && layout && main) {
-    if (!chatSideHomes.has(panel)) chatSideHomes.set(panel, { layout, main, side });
-    section.hidden = false;
-    $("#drawerChatSlot").append(side);
-  } else {
-    section.hidden = true;
-  }
 }
 
 $("#navToggle").addEventListener("click", () => setNavOpen(!document.body.classList.contains("nav-open")));
 $("#navClose").addEventListener("click", closeNav);
 $("#navBackdrop").addEventListener("click", closeNav);
-$("#navDrawer").addEventListener("click", (event) => {
-  if (event.target.closest(".chat-item") || event.target.closest("#webchatNew")) closeNav();
-});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && document.body.classList.contains("nav-open")) closeNav();
 });
@@ -534,10 +553,6 @@ const TAB_MODULES = {
   voice: "voices.js",
   recorder: "recorder.js",
   playground: "playground.js",
-  turtle: "turtle.js",
-  llm: "llm.js",
-  webchat: "webchat.js",
-  sessions: "sessions.js",
   requests: "requests.js",
   listen: "listen.js",
 };
@@ -572,7 +587,6 @@ export async function chooseTab(name) {
     }
   }
 
-  document.body.classList.toggle("chat-mode", name === "webchat" || name === "sessions");
   clearNotice("#globalNotice");
 
   const panel = $(`#${name}Panel`);
@@ -590,7 +604,7 @@ export async function chooseTab(name) {
   }
 
   placeNavChrome();
-  if (name !== "webchat" && name !== "sessions") closeNav();
+  closeNav();
 }
 
 $$(".tab[data-tab]").forEach((tab) => {

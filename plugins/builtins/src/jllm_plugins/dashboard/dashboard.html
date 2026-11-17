@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="dark">
   <title>jllm voice</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="alternate icon" href="/favicon.ico">
@@ -18,7 +18,7 @@
     <div class="desktop-brand">
       <a class="brand" href="/" aria-label="jllm voice ホーム">
         <span class="brand-mark"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M3 18v5M11 10v20M20 4v32M29 12v16M37 17v7" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg></span>
-        jllm voice
+        <span>jllm voice</span>
       </a>
     </div>
     <span class="topbar-brand">jllm voice</span>
@@ -39,10 +39,6 @@
       </button>
     </div>
     <div class="drawer-body">
-      <div class="drawer-sec" id="drawerChat" hidden>
-        <h2 class="drawer-sec-title">会話</h2>
-        <div id="drawerChatSlot" class="chat-panel"></div>
-      </div>
       <div class="drawer-sec">
         <h2 class="drawer-sec-title">メニュー</h2>
         <div id="drawerTabsSlot"></div>
@@ -65,43 +61,44 @@
   </dialog>
 
   <main id="dashboard" class="shell" hidden>
-    <section class="metrics" aria-label="辞書の概要">
-      <div class="metric"><div class="metric-icon" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><path d="M3 18v5M11 10v20M20 4v32M29 12v16M37 17v7" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></div><div><div class="metric-label">特殊読み</div><div id="entryCount" class="metric-value">—</div></div></div>
-      <div class="metric"><div class="metric-icon" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 12h26m-7-6 7 6-7 6M33 28H7m7-6-7 6 7 6"/></svg></div><div><div class="metric-label">音声差し替え</div><div id="soundCount" class="metric-value">—</div></div></div>
-      <div class="metric"><div class="metric-icon" aria-hidden="true"><svg viewBox="0 0 44 40"><text x="22" y="26" text-anchor="middle" fill="currentColor" font-size="18" font-family="system-ui" font-weight="700">GIF</text></svg></div><div><div class="metric-label">GIF</div><div id="gifCount" class="metric-value">—</div></div></div>
-    </section>
+    <div class="workspace">
+      <aside class="sidebar" aria-label="機能ナビゲーション">
+        <nav class="tabs" aria-label="登録内容の種類" role="tablist">
+          <div class="nav-group" aria-hidden="true">辞書・メディア</div>
+          <button id="soundTab" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="soundPanel" data-tab="sound"><span class="tab-label">音声ファイル</span><span class="tab-count" id="soundTabCount"></span></button>
+          <button id="overviewTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="overviewPanel" data-tab="overview"><span class="tab-label">全体像</span></button>
+          <button id="readingTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="readingPanel" data-tab="reading"><span class="tab-label">特殊読み</span><span class="tab-count" id="readingTabCount"></span></button>
+          <button id="gifTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="gifPanel" data-tab="gif"><span class="tab-label">GIF</span><span class="tab-count" id="gifTabCount"></span></button>
 
-    <nav class="tabs" aria-label="登録内容の種類" role="tablist">
-      <button id="soundTab" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="soundPanel" data-tab="sound">音声ファイル <span class="tab-count" id="soundTabCount"></span></button>
-      <button id="overviewTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="overviewPanel" data-tab="overview">全体像</button>
-      <button id="readingTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="readingPanel" data-tab="reading">特殊読み <span class="tab-count" id="readingTabCount"></span></button>
-      <button id="gifTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="gifPanel" data-tab="gif">GIF <span class="tab-count" id="gifTabCount"></span></button>
-      <button id="voiceTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="voicePanel" data-tab="voice">話者クローン <span class="tab-count" id="voiceTabCount"></span></button>
-      <button id="recorderTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="recorderPanel" data-tab="recorder">ボイスクローン</button>
-      <button id="playgroundTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="playgroundPanel" data-tab="playground">実験場</button>
-      <button id="turtleTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="turtlePanel" data-tab="turtle">ウミガメ</button>
-      <button id="llmTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="llmPanel" data-tab="llm">LLM設定</button>
-      <button id="webchatTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="webchatPanel" data-tab="webchat">AIチャット</button>
-      <button id="sessionsTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="sessionsPanel" data-tab="sessions">会話セッション <span class="tab-count" id="sessionsTabCount"></span></button>
-      <button id="requestsTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="requestsPanel" data-tab="requests">話者クローン登録申請 <span class="tab-count" id="requestsTabCount"></span></button>
-      <button id="listenTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="listenPanel" data-tab="listen">聞き取り</button>
-    </nav>
+          <div class="nav-group" aria-hidden="true">ボイス・音声処理</div>
+          <button id="voiceTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="voicePanel" data-tab="voice"><span class="tab-label">話者クローン</span><span class="tab-count" id="voiceTabCount"></span></button>
+          <button id="recorderTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="recorderPanel" data-tab="recorder"><span class="tab-label">ボイスクローン</span></button>
+          <button id="playgroundTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="playgroundPanel" data-tab="playground"><span class="tab-label">実験場</span></button>
+          <button id="requestsTab" class="tab admin-only" type="button" role="tab" aria-selected="false" aria-controls="requestsPanel" data-tab="requests"><span class="tab-label">登録申請</span><span class="tab-count" id="requestsTabCount"></span></button>
+          <button id="listenTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="listenPanel" data-tab="listen"><span class="tab-label">聞き取り</span></button>
+        </nav>
+      </aside>
 
-    <section class="grid" id="soundPanel" role="tabpanel" aria-labelledby="soundTab"></section>
-    <section id="overviewPanel" role="tabpanel" aria-labelledby="overviewTab" hidden></section>
-    <section class="grid" id="readingPanel" role="tabpanel" aria-labelledby="readingTab" hidden></section>
-    <section class="grid" id="gifPanel" role="tabpanel" aria-labelledby="gifTab" hidden></section>
-    <section class="grid" id="voicePanel" role="tabpanel" aria-labelledby="voiceTab" hidden></section>
-    <section id="recorderPanel" role="tabpanel" aria-labelledby="recorderTab" hidden></section>
-    <section class="pg-layout" id="playgroundPanel" role="tabpanel" aria-labelledby="playgroundTab" hidden></section>
-    <section class="grid" id="turtlePanel" role="tabpanel" aria-labelledby="turtleTab" hidden></section>
-    <section id="llmPanel" class="admin-only" role="tabpanel" aria-labelledby="llmTab" hidden></section>
-    <section class="chat-panel" id="webchatPanel" role="tabpanel" aria-labelledby="webchatTab" hidden></section>
-    <section class="chat-panel" id="sessionsPanel" role="tabpanel" aria-labelledby="sessionsTab" hidden></section>
-    <section id="requestsPanel" role="tabpanel" aria-labelledby="requestsTab" hidden></section>
-    <section class="grid" id="listenPanel" role="tabpanel" aria-labelledby="listenTab" hidden></section>
+      <div class="workspace-main">
+        <section class="metrics" aria-label="辞書の概要">
+          <div class="metric"><div class="metric-icon" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><path d="M3 18v5M11 10v20M20 4v32M29 12v16M37 17v7" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></div><div><div class="metric-label">特殊読み</div><div id="entryCount" class="metric-value">—</div></div></div>
+          <div class="metric"><div class="metric-icon" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 12h26m-7-6 7 6-7 6M33 28H7m7-6-7 6 7 6"/></svg></div><div><div class="metric-label">音声差し替え</div><div id="soundCount" class="metric-value">—</div></div></div>
+          <div class="metric"><div class="metric-icon" aria-hidden="true"><svg viewBox="0 0 44 40"><text x="22" y="26" text-anchor="middle" fill="currentColor" font-size="18" font-family="system-ui" font-weight="700">GIF</text></svg></div><div><div class="metric-label">GIF</div><div id="gifCount" class="metric-value">—</div></div></div>
+        </section>
 
-    <div id="globalNotice" class="notice" role="status"></div>
+        <section class="grid" id="soundPanel" role="tabpanel" aria-labelledby="soundTab"></section>
+        <section id="overviewPanel" role="tabpanel" aria-labelledby="overviewTab" hidden></section>
+        <section class="grid" id="readingPanel" role="tabpanel" aria-labelledby="readingTab" hidden></section>
+        <section class="grid" id="gifPanel" role="tabpanel" aria-labelledby="gifTab" hidden></section>
+        <section class="grid" id="voicePanel" role="tabpanel" aria-labelledby="voiceTab" hidden></section>
+        <section id="recorderPanel" role="tabpanel" aria-labelledby="recorderTab" hidden></section>
+        <section class="pg-layout" id="playgroundPanel" role="tabpanel" aria-labelledby="playgroundTab" hidden></section>
+        <section id="requestsPanel" role="tabpanel" aria-labelledby="requestsTab" hidden></section>
+        <section class="grid" id="listenPanel" role="tabpanel" aria-labelledby="listenTab" hidden></section>
+
+        <div id="globalNotice" class="notice" role="status"></div>
+      </div>
+    </div>
   </main>
 
   <dialog id="entryEditor" class="editor" aria-labelledby="editorTitle">

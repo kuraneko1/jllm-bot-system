@@ -40,10 +40,10 @@ function drawCurve(panel, curve) {
   const span = curve.seconds || 30;
   const x = (ago) => width - (ago / span) * width;
   const y = (v) => height - 18 - Math.max(0, Math.min(1, v)) * (height - 40);
-  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0f766e";
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#f59e0b";
 
-  c2d.strokeStyle = "rgba(15,40,35,.10)";
-  c2d.fillStyle = "rgba(15,40,35,.45)";
+  c2d.strokeStyle = "rgba(255,255,255,.11)";
+  c2d.fillStyle = "rgba(244,244,245,.58)";
   c2d.font = "11px system-ui, sans-serif";
   c2d.lineWidth = 1;
   for (const v of [0, 0.5, 1]) {
@@ -53,8 +53,8 @@ function drawCurve(panel, curve) {
     c2d.stroke();
     c2d.fillText(`${Math.round(v * 100)}%`, 4, y(v) - 4);
   }
-  for (const [key, alpha] of [["receiving", 0.06], ["active", 0.13]]) {
-    c2d.fillStyle = `rgba(15,118,110,${alpha})`;
+  for (const [key, alpha] of [["receiving", 0.08], ["active", 0.18]]) {
+    c2d.fillStyle = `rgba(34,197,94,${alpha})`;
     for (const sample of samples) {
       if (!sample[key]) continue;
       const left = Math.min(x(sample.ago), x(sample.ago - (curve.tick || 0.04)));
@@ -116,11 +116,11 @@ function drawDuckEditor(panel) {
   const c2d = canvas.getContext("2d");
   c2d.setTransform(ratio, 0, 0, ratio, 0, 0);
   c2d.clearRect(0, 0, width, height);
-  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0f766e";
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#f59e0b";
   const pad = 34;
 
-  c2d.strokeStyle = "rgba(15,40,35,.10)";
-  c2d.fillStyle = "rgba(15,40,35,.45)";
+  c2d.strokeStyle = "rgba(255,255,255,.11)";
+  c2d.fillStyle = "rgba(244,244,245,.58)";
   c2d.font = "11px system-ui, sans-serif";
   c2d.lineWidth = 1;
   for (const v of [0, 0.25, 0.5, 0.75, 1]) {
@@ -141,7 +141,7 @@ function drawDuckEditor(panel) {
     c2d.fillText(`${s}s`, x + 2, height - 8);
   }
   const points = [...duckCurve.points].sort((a, b) => a.seconds - b.seconds);
-  c2d.fillStyle = "rgba(15,118,110,.10)";
+  c2d.fillStyle = "rgba(245,158,11,.13)";
   points.forEach((p, i) => {
     const from = duckXY(canvas, p);
     const to = i + 1 < points.length ? duckXY(canvas, points[i + 1]) : { x: width - 12 };
@@ -262,7 +262,7 @@ export function mount(panel, ctx) {
     </article>
     <article class="card admin-only" id="listenCurveCard" hidden>
       <div class="card-head"><div><h2>音量カーブ</h2><p>直近30秒の読み上げ音量推移です。</p></div><span id="listenCurveMeta" class="subtle"></span></div>
-      <div class="curve-legend"><span><i style="background:var(--accent)"></i>読み上げ音量</span><span><i style="background:rgba(15,118,110,.25)"></i>喋っている区間</span></div>
+      <div class="curve-legend"><span><i style="background:var(--accent)"></i>読み上げ音量</span><span><i style="background:rgba(34,197,94,.45)"></i>喋っている区間</span></div>
       <div class="curve-wrap"><canvas id="listenCurve" width="900" height="240" role="img" aria-label="読み上げ音量の推移"></canvas></div>
       <div id="listenCurveTimings" class="subtle" style="padding:0 20px 14px"></div>
     </article>
