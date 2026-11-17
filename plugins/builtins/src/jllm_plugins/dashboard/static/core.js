@@ -522,9 +522,26 @@ const ctx = {
 
 const MODULE_VERSION_SUFFIX = state.assetV ? `?v=${encodeURIComponent(state.assetV)}` : "";
 
+const TAB_MODULES = {
+  sound: "sounds.js",
+  overview: "overview.js",
+  reading: "readings.js",
+  gif: "gifs.js",
+  voice: "voices.js",
+  recorder: "recorder.js",
+  playground: "playground.js",
+  turtle: "turtle.js",
+  llm: "llm.js",
+  webchat: "webchat.js",
+  sessions: "sessions.js",
+  requests: "requests.js",
+  listen: "listen.js",
+};
+
 async function loadTabModule(name) {
   if (loadedModules.has(name)) return loadedModules.get(name);
-  const mod = await import(`/static/tabs/${name}.js${MODULE_VERSION_SUFFIX}`);
+  const file = TAB_MODULES[name] || `${name}.js`;
+  const mod = await import(`/static/tabs/${file}${MODULE_VERSION_SUFFIX}`);
   loadedModules.set(name, mod);
   return mod;
 }

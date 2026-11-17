@@ -1225,6 +1225,14 @@ class ListeningApiTests(ReadingDashboardTests):
         cached = await self.client.get("/static/app.css", headers={"If-None-Match": etag})
         self.assertEqual(cached.status, 304)
 
+        for name in (
+            "sounds.js", "overview.js", "readings.js", "gifs.js", "voices.js",
+            "recorder.js", "playground.js", "turtle.js", "llm.js", "webchat.js",
+            "sessions.js", "requests.js", "listen.js",
+        ):
+            mod = await self.client.get(f"/static/tabs/{name}")
+            self.assertEqual(mod.status, 200, name)
+
         blocked = await self.client.get("/static/../dashboard.py")
         self.assertEqual(blocked.status, 404)
 
