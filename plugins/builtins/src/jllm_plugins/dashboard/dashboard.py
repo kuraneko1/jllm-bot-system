@@ -1,6 +1,7 @@
 # ruff: noqa: E501, E402
 import asyncio
 import hashlib
+import html as html_lib
 import json
 import logging
 import math
@@ -125,11 +126,13 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         self.app.add_routes(
             [
                 web.get("/", self._index),
+                web.get("/static/{path:.*}", self._static_asset),
                 web.get("/recorder", self._recorder),
                 web.get("/tts-panel", self._tts_panel),
                 web.get("/favicon.svg", self._favicon),
                 web.get("/favicon.ico", self._favicon),
                 web.get("/apple-touch-icon.png", self._apple_touch_icon),
+                web.get("/api/summary", self._get_summary),
                 web.get("/api/playground/effects", self._playground_effects),
                 web.post("/api/playground", self._playground_speech),
                 # ウミガメのスープ。ログイン不要（実験場と同じく回数制限つき）。
@@ -391,7 +394,14 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         response.headers["X-Frame-Options"] = "SAMEORIGIN" if request.path == "/recorder" else "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         if request.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
+            response.headers.setdefault("Cache-Control", "no-store")
+        if (
+            type(response) is web.Response
+            and response.body
+            and len(response.body) >= 1024
+            and "gzip" in request.headers.get("Accept-Encoding", "").lower()
+        ):
+            response.enable_compression()
         return response
 
     def _session_token(self, request: web.Request) -> str | None:
@@ -504,17 +514,94 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         except Exception:
             return self._json_error("LLM設定を更新できませんでした。", 503)
 
-    async def _index(self, request: web.Request) -> web.StreamResponse:
-        page = Path(__file__).with_name("dashboard.html")
-        # HTMLダッシュボードへのリンクだけ、設定値を埋め込んで返す。
-        html = page.read_text(encoding="utf-8").replace(
-            "{{VIEWER_URL}}", self.config.viewer_url or ""
+    _STATIC_TYPES = {
+        ".css": "text/css; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".svg": "image/svg+xml; charset=utf-8",
+        ".png": "image/png",
+        ".json": "application/json; charset=utf-8",
+    }
+
+    @classmethod
+    def _asset_version(cls) -> str:
+        static_dir = Path(__file__).with_name("static")
+        if not static_dir.is_dir():
+            return "0"
+        entries = sorted(
+            (str(p.relative_to(static_dir)), p.stat().st_mtime_ns, p.stat().st_size)
+            for p in static_dir.rglob("*")
+            if p.is_file()
         )
-        return web.Response(
+        cached = getattr(cls, "_asset_cache", None)
+        if cached and cached[0] == entries:
+            return cached[1]
+        digest = hashlib.sha256(repr(entries).encode("utf-8")).hexdigest()[:12]
+        cls._asset_cache = (entries, digest)
+        return digest
+
+    @classmethod
+    def _index_template(cls) -> str:
+        page = Path(__file__).with_name("dashboard.html")
+        mtime = page.stat().st_mtime_ns
+        cached = getattr(cls, "_template_cache", None)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        text = page.read_text(encoding="utf-8")
+        cls._template_cache = (mtime, text)
+        return text
+
+    async def _static_asset(self, request: web.Request) -> web.StreamResponse:
+        rel = request.match_info.get("path", "")
+        static_root = Path(__file__).with_name("static").resolve()
+        try:
+            target = (static_root / rel).resolve()
+            target.relative_to(static_root)
+        except ValueError:
+            return self._json_error("ファイルが見つかりません。", 404)
+        if not target.is_file() or target.is_symlink():
+            return self._json_error("ファイルが見つかりません。", 404)
+        content_type = self._STATIC_TYPES.get(target.suffix.lower())
+        if content_type is None:
+            return self._json_error("非対応のファイル形式です。", 404)
+
+        stat = target.stat()
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+        if request.headers.get("If-None-Match") == etag:
+            return web.Response(status=304, headers={"ETag": etag})
+
+        cache_control = (
+            "public, max-age=31536000, immutable"
+            if request.query.get("v")
+            else "public, max-age=3600"
+        )
+        headers = {"ETag": etag, "Cache-Control": cache_control}
+        if target.suffix.lower() in {".css", ".js", ".svg", ".json"}:
+            resp = web.Response(
+                body=target.read_bytes(),
+                content_type=content_type.split(";", 1)[0],
+                charset="utf-8",
+                headers=headers,
+            )
+            if "gzip" in request.headers.get("Accept-Encoding", "").lower():
+                resp.enable_compression()
+            return resp
+        return web.FileResponse(target, headers={"Content-Type": content_type, **headers})
+
+    async def _index(self, request: web.Request) -> web.StreamResponse:
+        viewer_url = html_lib.escape(self.config.viewer_url or "", quote=True)
+        html = (
+            self._index_template()
+            .replace("{{VIEWER_URL}}", viewer_url)
+            .replace("{{ASSET_V}}", self._asset_version())
+        )
+        resp = web.Response(
             text=html,
             content_type="text/html",
             headers={"Cache-Control": "no-store"},
         )
+        if request is not None and "gzip" in request.headers.get("Accept-Encoding", "").lower():
+            resp.enable_compression()
+        return resp
 
     async def _tts_panel(self, request: web.Request) -> web.StreamResponse:
         """読み上げエンジンと配信方式だけを触る小さな画面（API はログイン必須）。"""
@@ -863,6 +950,27 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         response = web.json_response({"ok": True})
         response.del_cookie(SESSION_COOKIE, path="/")
         return response
+
+    async def _get_summary(self, request: web.Request) -> web.Response:
+        sound_count = 0
+        sound_enabled = False
+        gif_count = 0
+        if self.reader is not None:
+            dictionary = getattr(self.reader, "dictionary", None)
+            if dictionary is not None:
+                sound_count = len(dictionary.entries)
+                sound_enabled = bool(getattr(dictionary, "enabled", False))
+            media = getattr(self.reader, "media", None)
+            if media is not None:
+                gif_count = len(media)
+        return web.json_response(
+            {
+                "readings": len(self.readings.entries),
+                "sounds": sound_count,
+                "gifs": gif_count,
+                "sound_enabled": sound_enabled,
+            }
+        )
 
     async def _get_readings(self, request: web.Request) -> web.Response:
         entries = [

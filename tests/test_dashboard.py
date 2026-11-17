@@ -338,7 +338,11 @@ class ReadingDashboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         page = await response.text()
         self.assertIn("<title>jllm voice</title>", page)
-        self.assertIn("/api/generate", page)
+        self.assertIn("/static/app.css", page)
+        self.assertIn("/static/core.js", page)
+
+        readings_js = await (await self.client.get("/static/tabs/readings.js")).text()
+        self.assertIn("/api/generate", readings_js)
 
         await self.login()
         response = await self.client.post(
@@ -1158,11 +1162,12 @@ class ListeningApiTests(ReadingDashboardTests):
         await self.login()
 
         html = await (await self.client.get("/")).text()
+        listen_js = await (await self.client.get("/static/tabs/listen.js")).text()
 
         self.assertIn('id="listenTab"', html)
         self.assertIn('id="listenPanel"', html)
-        self.assertIn('id="listenCurve"', html)
-        self.assertIn("/api/listening", html)
+        self.assertIn('id="listenCurve"', listen_js)
+        self.assertIn("/api/listening", listen_js)
         # 未ログインでも開ける（タブは管理者限定にしない）
         self.assertIn('<button id="listenTab" class="tab"', html)
         # 声コマンド（STT）の面は消えている
@@ -1175,6 +1180,9 @@ class ListeningApiTests(ReadingDashboardTests):
         await self.login()
 
         html = await (await self.client.get("/")).text()
+        core_js = await (await self.client.get("/static/core.js")).text()
+        overview_js = await (await self.client.get("/static/tabs/overview.js")).text()
+        app_css = await (await self.client.get("/static/app.css")).text()
 
         self.assertIn('id="overviewTab"', html)
         self.assertIn('id="overviewPanel"', html)
@@ -1184,8 +1192,9 @@ class ListeningApiTests(ReadingDashboardTests):
         self.assertLess(html.index('data-tab="sound"'), html.index('id="overviewTab"'))
         self.assertLess(html.index('id="overviewTab"'), html.index('data-tab="reading"'))
         # ?tab=overview で開ける（許可リストに入っている）
-        self.assertIn('"overview", "recorder"', html)
-        # モックアップの内容がそのまま入っている
+        self.assertIn('"overview", "reading"', core_js)
+        self.assertIn('"recorder"', core_js)
+        # モックアップの内容がモジュールに入っている
         for heading in [
             "概念図",
             "Web UI（ダッシュボード）",
@@ -1195,14 +1204,29 @@ class ListeningApiTests(ReadingDashboardTests):
             "掛かる範囲のルール",
             "読み上げを止める・飛ばす",
         ]:
-            self.assertIn(heading, html)
-        # カスタムCSSは ov- 接頭辞で統合し、トークンは再定義しない
-        self.assertIn(".ov-diagram", html)
-        css = html.split("全体像（?tab=overview）", 1)[1].split("</style>", 1)[0]
-        self.assertIn(".ov-diagram", css)
-        self.assertNotIn("--bg:", css)
-        self.assertNotIn("--panel:", css)
-        self.assertNotIn("color-scheme", css)
+            self.assertIn(heading, overview_js)
+        # 全体像CSSは統合CSSに含まれ、独自トークンを再定義しない
+        self.assertIn(".ov-diagram", app_css)
+        ov_css = app_css.split("Overview (?tab=overview)", 1)[1]
+        self.assertIn(".ov-diagram", ov_css)
+        self.assertNotIn("--bg:", ov_css)
+        self.assertNotIn("--surface:", ov_css)
+
+    async def test_static_assets_summary_etag_and_traversal_protection(self):
+        summary = await self.client.get("/api/summary")
+        self.assertEqual(summary.status, 200)
+        counts = await summary.json()
+        self.assertEqual(set(counts), {"readings", "sounds", "gifs", "sound_enabled"})
+
+        css = await self.client.get("/static/app.css")
+        self.assertEqual(css.status, 200)
+        etag = css.headers.get("ETag")
+        self.assertTrue(etag)
+        cached = await self.client.get("/static/app.css", headers={"If-None-Match": etag})
+        self.assertEqual(cached.status, 304)
+
+        blocked = await self.client.get("/static/../dashboard.py")
+        self.assertEqual(blocked.status, 404)
 
 
 class ViewerLinkTests(unittest.IsolatedAsyncioTestCase):

@@ -119,7 +119,7 @@ class DictionaryAdmin:
         path = self._safe_file(dictionary.sounds_dir, filename)
         if path is None:
             return self._error("登録ファイルが見つかりません。", 404)
-        return web.FileResponse(path, headers={"Content-Type": "audio/wav", "Cache-Control": "no-store"})
+        return web.FileResponse(path, headers={"Content-Type": "audio/wav", "Cache-Control": "public, max-age=300"})
 
     async def _edit_sound(self, request):
         dictionary = self._sound()
@@ -249,7 +249,7 @@ class DictionaryAdmin:
         path = self._safe_file(self.reader.media_dir, media[key])
         if path is None or path.suffix.lower() != ".gif":
             return self._error("登録GIFが見つかりません。", 404)
-        return web.FileResponse(path, headers={"Content-Type": "image/gif", "Cache-Control": "no-store"})
+        return web.FileResponse(path, headers={"Content-Type": "image/gif", "Cache-Control": "public, max-age=300"})
 
     async def _edit_gif(self, request):
         media = self._media()
