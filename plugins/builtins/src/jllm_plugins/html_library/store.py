@@ -5,6 +5,7 @@ import base64
 import html as html_lib
 import json
 import logging
+import mimetypes
 import re
 import shutil
 import socket
@@ -13,6 +14,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+
+from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +89,146 @@ def find_chrome() -> str | None:
         if path:
             return path
     return None
+
+
+def _og_meta(
+    *,
+    title: str,
+    description: str,
+    url: str = "",
+    image_url: str = "",
+    author: str = "",
+    site_name: str = "HTML Dashboard",
+) -> str:
+    """Open Graph / Twitter Card のリンクプレビュー用メタタグを組み立てる。"""
+
+    tags = [
+        '<meta property="og:type" content="website">',
+        f'<meta property="og:site_name" content="{html_lib.escape(site_name, quote=True)}">',
+        f'<meta property="og:title" content="{html_lib.escape(title, quote=True)}">',
+        f'<meta property="og:description" content="{html_lib.escape(description, quote=True)}">',
+    ]
+    if url:
+        tags.append(f'<meta property="og:url" content="{html_lib.escape(url, quote=True)}">')
+    if image_url:
+        safe_img = html_lib.escape(image_url, quote=True)
+        tags.extend(
+            [
+                f'<meta property="og:image" content="{safe_img}">',
+                '<meta property="og:image:width" content="960">',
+                '<meta property="og:image:height" content="600">',
+                '<meta name="twitter:card" content="summary_large_image">',
+                f'<meta name="twitter:image" content="{safe_img}">',
+            ]
+        )
+    else:
+        tags.append('<meta name="twitter:card" content="summary">')
+    tags.extend(
+        [
+            f'<meta name="twitter:title" content="{html_lib.escape(title, quote=True)}">',
+            f'<meta name="twitter:description" content="{html_lib.escape(description, quote=True)}">',
+            f'<meta name="description" content="{html_lib.escape(description, quote=True)}">',
+        ]
+    )
+    if author:
+        tags.append(f'<meta name="author" content="{html_lib.escape(author, quote=True)}">')
+    return "\n".join(tags)
+
+
+_THUMB_READY_JS = """(() => {
+  const ready = document.readyState === "complete";
+  const vw = window.innerWidth || 960;
+  const vh = window.innerHeight || 600;
+  const sels = [
+    "#loader", "#load", "#loading",
+    "[id*='loader']", "[id*='loading']",
+    ".loader", ".loading",
+    "[class*='loader']", "[class*='loading']"
+  ];
+  let blocking = false;
+  for (const el of document.querySelectorAll(sels.join(","))) {
+    const cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden" || parseFloat(cs.opacity || "1") <= 0.1) {
+      continue;
+    }
+    const r = el.getBoundingClientRect();
+    if (r.width >= vw * 0.45 && r.height >= vh * 0.45) {
+      blocking = true;
+      break;
+    }
+  }
+  return { ready, blocking };
+})()"""
+
+
+def _resolve_thumb_file(root_resolved: Path, rel: str, entry_name: str) -> tuple[int, Path | None, str]:
+    target = (root_resolved / (rel or entry_name)).resolve()
+    try:
+        target.relative_to(root_resolved)
+    except ValueError:
+        return 403, None, ""
+    if not target.is_file():
+        return 404, None, ""
+    ctype, _ = mimetypes.guess_type(target.name)
+    return 200, target, ctype or "application/octet-stream"
+
+
+async def _start_thumb_server(root: Path, entry_name: str) -> tuple[web.AppRunner, str]:
+    """file:// の CDN 読み込み停滞を避けるため、ローカルループバック HTTP で配信する。"""
+
+    root_resolved = await asyncio.to_thread(root.resolve)
+
+    async def handle(request: web.Request) -> web.StreamResponse:
+        rel = request.match_info.get("path", "")
+        status, target, ctype = await asyncio.to_thread(
+            _resolve_thumb_file, root_resolved, rel, entry_name
+        )
+        if status != 200 or target is None:
+            return web.Response(status=status)
+        return web.FileResponse(target, headers={"Content-Type": ctype})
+
+    app = web.Application()
+    app.router.add_get("/", handle)
+    app.router.add_get("/{path:.*}", handle)
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = runner.addresses[0][1]
+    return runner, f"http://127.0.0.1:{port}/{entry_name}"
+
+
+async def _wait_page_ready(command, wait: float) -> None:
+    """ページ読込完了と全画面ローダーの消滅を待ち、描画安定後に戻る。"""
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    min_wait = min(wait, 2.0)
+    max_wait = max(wait, 25.0)
+    settle = min(1.2, max(0.1, wait * 0.2))
+    ready_since: float | None = None
+
+    while True:
+        elapsed = loop.time() - start
+        if elapsed >= max_wait:
+            return
+        state = None
+        try:
+            res = await command(
+                "Runtime.evaluate",
+                {"expression": _THUMB_READY_JS, "returnByValue": True},
+            )
+            state = res.get("result", {}).get("value")
+        except Exception:
+            state = None
+        if isinstance(state, dict) and state.get("ready") and not state.get("blocking"):
+            if ready_since is None:
+                ready_since = loop.time()
+            if elapsed >= min_wait and (loop.time() - ready_since) >= settle:
+                return
+        else:
+            ready_since = None
+        await asyncio.sleep(0.35)
 
 
 async def capture_thumbnail(
@@ -164,14 +307,18 @@ async def capture_thumbnail(
                     return data.get("result", {})
 
             await command("Page.enable")
+            await command("Runtime.enable")
             await command(
                 "Emulation.setDeviceMetricsOverride",
                 {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False},
             )
-            source_uri = await asyncio.to_thread(lambda: source.absolute().as_uri())
-            await command("Page.navigate", {"url": source_uri})
-            await asyncio.sleep(wait)
-            shot = await command("Page.captureScreenshot", {"format": "jpeg", "quality": 80})
+            thumb_runner, thumb_url = await _start_thumb_server(source.parent, source.name)
+            try:
+                await command("Page.navigate", {"url": thumb_url})
+                await _wait_page_ready(command, wait)
+                shot = await command("Page.captureScreenshot", {"format": "jpeg", "quality": 80})
+            finally:
+                await thumb_runner.cleanup()
             payload = base64.b64decode(shot["data"])
             await ws.close()
     except Exception:
@@ -640,9 +787,51 @@ class HtmlStore:
             )
         return "\n".join(items)
 
-    def dashboard_html(self, title: str, records: list[dict], back_href: str | None = None) -> str:
+    def dashboard_html(
+        self,
+        title: str,
+        records: list[dict],
+        back_href: str | None = None,
+        *,
+        page_url: str = "",
+        og_author: str = "",
+    ) -> str:
         safe_title = html_lib.escape(title)
         owners = {record.get("display_name", "") or record.get("user_id", "") for record in records}
+        base = self.config.viewer_base_url.rstrip("/")
+        preview = next(
+            (rec for rec in records if self.thumbnail_path(rec).is_file()),
+            records[0] if records else None,
+        )
+        image_url = ""
+        if preview:
+            p_uid = preview.get("user_id", "")
+            p_sid = preview.get("site_id", "")
+            if base:
+                image_url = f"{base}/users/{p_uid}/{p_sid}/thumb.jpg"
+            elif back_href:
+                image_url = f"{p_sid}/thumb.jpg"
+            else:
+                image_url = f"users/{p_uid}/{p_sid}/thumb.jpg"
+        if og_author:
+            if records:
+                latest_title = records[0].get("title", "HTML")
+                og_desc = f"登録者: {og_author} ・ {len(records)}ページ（最新: {latest_title}）"
+            else:
+                og_desc = f"登録者: {og_author} のHTML一覧"
+        elif records:
+            latest_title = records[0].get("title", "HTML")
+            latest_owner = records[0].get("display_name", "") or records[0].get("user_id", "")
+            og_desc = f"登録者 {len(owners)}名 ・ {len(records)}ページ（最新: {latest_title} / {latest_owner}）"
+        else:
+            og_desc = "登録されたHTMLページのギャラリー"
+        og_tags = _og_meta(
+            title=title,
+            description=og_desc,
+            url=page_url,
+            image_url=image_url,
+            author=og_author,
+        )
         back = ""
         if back_href:
             back = (
@@ -668,6 +857,7 @@ class HtmlStore:
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>{safe_title}</title>
+{og_tags}
 <script>try{{var t=localStorage.getItem("jllmHtmlTheme");document.documentElement.dataset.theme=t==="light"?"light":"dark";}}catch(_){{}}</script>
 <style>{DASHBOARD_CSS}</style>
 </head><body>
@@ -760,6 +950,7 @@ class HtmlStore:
 
     def rebuild_dashboards(self):
         self.html_dir.mkdir(parents=True, exist_ok=True)
+        base = self.config.viewer_base_url.rstrip("/")
         for record in self.catalog:
             site = self.site_dir(record)
             if (site / "content.html").is_file():
@@ -769,11 +960,17 @@ class HtmlStore:
                         record.get("title", "HTML"),
                         record.get("user_id", ""),
                         record.get("site_id", ""),
+                        author=record.get("display_name", "") or record.get("user_id", ""),
+                        base_url=base,
                     ),
                 )
         self._write(
             self.html_dir / "index.html",
-            self.dashboard_html("HTML Dashboard", list(reversed(self.catalog))),
+            self.dashboard_html(
+                "HTML Dashboard",
+                list(reversed(self.catalog)),
+                page_url=f"{base}/" if base else "",
+            ),
         )
         by_user: dict[str, list[dict]] = {}
         for record in self.catalog:
@@ -784,7 +981,13 @@ class HtmlStore:
             display_name = records[-1].get("display_name", user_id)
             self._write(
                 user_dir / "index.html",
-                self.dashboard_html(f"{display_name} のHTML", list(reversed(records)), "/"),
+                self.dashboard_html(
+                    f"{display_name} のHTML",
+                    list(reversed(records)),
+                    "/",
+                    page_url=f"{base}/users/{user_id}/" if base else "",
+                    og_author=display_name,
+                ),
             )
 
     def thumbnail_path(self, record: dict) -> Path:
@@ -851,16 +1054,34 @@ class HtmlStore:
 
     @staticmethod
     def viewer_wrapper_html(
-        title: str, user_id: str, site_id: str, data: bytes = b""
+        title: str,
+        user_id: str,
+        site_id: str,
+        data: bytes = b"",
+        *,
+        author: str = "",
+        base_url: str = "",
     ) -> str:
         safe_title = html_lib.escape(title)
         safe_user = html_lib.escape(user_id, quote=True)
+        base = base_url.rstrip("/")
+        page_url = f"{base}/users/{user_id}/{site_id}/" if base else ""
+        image_url = f"{base}/users/{user_id}/{site_id}/thumb.jpg" if base else "thumb.jpg"
+        description = f"登録者: {author}" if author else f"HTMLページ: {title}"
+        og_tags = _og_meta(
+            title=title,
+            description=description,
+            url=page_url,
+            image_url=image_url,
+            author=author,
+        )
         return (
             "<!doctype html>\n"
             '<html lang="ja"><head>\n'
             '<meta charset="utf-8">\n'
             '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n'
             f"<title>{safe_title}</title>\n"
+            f"{og_tags}\n"
             '<style id="html-viewer-style">\n'
             "*{box-sizing:border-box}\n"
             "html,body{margin:0;padding:0;height:100%;background:#101216;color:#f4f4f5;"
@@ -952,7 +1173,14 @@ class HtmlStore:
         raw = (target_dir / "content.html").read_bytes()
         self._write(
             target_dir / "index.html",
-            self.viewer_wrapper_html(request["title"], user_id, site_id, raw),
+            self.viewer_wrapper_html(
+                request["title"],
+                user_id,
+                site_id,
+                raw,
+                author=request["display_name"] or user_id,
+                base_url=self.config.viewer_base_url,
+            ),
         )
         record = {
             "site_id": site_id,

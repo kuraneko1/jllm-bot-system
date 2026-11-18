@@ -130,5 +130,110 @@ class ReaderHtmlTests(ReaderCoreTests):
         self.assertEqual(len(self.store.catalog), 1)
 
 
+class HtmlPreviewAndThumbnailTests(unittest.IsolatedAsyncioTestCase):
+    async def test_link_preview_tags_for_published_site_and_dashboards(self):
+        import re
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from jllm_plugins.html_library.store import HtmlConfig, HtmlStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = SimpleNamespace(legacy_path=lambda p: root / p)
+            cfg = HtmlConfig(
+                require_approval=False,
+                thumbnail=False,
+                html_dir="html",
+                pending_dir="pending",
+                catalog_file="catalog.json",
+                viewer_base_url="https://html.example.test",
+                dashboard_url="https://html.example.test",
+            )
+            store = HtmlStore(storage, cfg)
+            author = SimpleNamespace(id="u1", display_name="Alice")
+            req_id = store.register(b"<title>Neon Wave</title><body>Hi</body>", "wave.html", author)
+            store.publish(req_id)
+            site_id = store.catalog[0]["site_id"]
+            site_dir = root / "html" / "users" / "u1" / site_id
+            (site_dir / "thumb.jpg").write_bytes(b"jpgdata")
+            store.rebuild_dashboards()
+
+            emoji_re = re.compile(r"[\U0001F300-\U0001FAFF]")
+            site_html = (site_dir / "index.html").read_text(encoding="utf-8")
+            self.assertIn('<meta property="og:title" content="Neon Wave">', site_html)
+            self.assertIn('<meta property="og:description" content="登録者: Alice">', site_html)
+            self.assertIn(
+                f'<meta property="og:image" content="https://html.example.test/users/u1/{site_id}/thumb.jpg">',
+                site_html,
+            )
+            self.assertIn(
+                f'<meta property="og:url" content="https://html.example.test/users/u1/{site_id}/">',
+                site_html,
+            )
+            self.assertIn('<meta name="twitter:card" content="summary_large_image">', site_html)
+            self.assertIn('<meta name="author" content="Alice">', site_html)
+
+            for dash_path, expected_title, expected_url in (
+                (
+                    root / "html" / "index.html",
+                    "HTML Dashboard",
+                    "https://html.example.test/",
+                ),
+                (
+                    root / "html" / "users" / "u1" / "index.html",
+                    "Alice のHTML",
+                    "https://html.example.test/users/u1/",
+                ),
+            ):
+                dash_html = dash_path.read_text(encoding="utf-8")
+                self.assertIsNone(emoji_re.search(dash_html))
+                self.assertIn(f'<meta property="og:title" content="{expected_title}">', dash_html)
+                self.assertIn(f'<meta property="og:url" content="{expected_url}">', dash_html)
+                self.assertIn("Alice", dash_html)
+                self.assertIn("Neon Wave", dash_html)
+                self.assertIn(
+                    f'<meta property="og:image" content="https://html.example.test/users/u1/{site_id}/thumb.jpg">',
+                    dash_html,
+                )
+                self.assertIn('<meta name="twitter:card" content="summary_large_image">', dash_html)
+
+    async def test_thumb_server_and_wait_page_ready(self):
+        import tempfile
+        from pathlib import Path
+
+        import aiohttp
+        from jllm_plugins.html_library.store import _start_thumb_server, _wait_page_ready
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "content.html").write_text("<h1>OK</h1>", encoding="utf-8")
+            (root.parent / "secret.txt").write_text("no", encoding="utf-8")
+
+            runner, url = await _start_thumb_server(root, "content.html")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        self.assertEqual(resp.status, 200)
+                        self.assertEqual(await resp.text(), "<h1>OK</h1>")
+                    base = url.rsplit("/", 1)[0]
+                    async with session.get(f"{base}/../secret.txt") as resp:
+                        self.assertIn(resp.status, (403, 404))
+            finally:
+                await runner.cleanup()
+
+        calls = 0
+
+        async def fake_command(method, params=None):
+            nonlocal calls
+            calls += 1
+            blocking = calls == 1
+            return {"result": {"value": {"ready": True, "blocking": blocking}}}
+
+        await _wait_page_ready(fake_command, wait=0.2)
+        self.assertGreaterEqual(calls, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
