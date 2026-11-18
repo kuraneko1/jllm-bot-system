@@ -124,10 +124,19 @@ class ReaderHtmlTests(ReaderCoreTests):
         ).HtmlApprovalView(self.cog, request_id)
         interaction = SimpleNamespace(
             user=SimpleNamespace(id=99),
-            response=SimpleNamespace(edit_message=AsyncMock(), send_message=AsyncMock()),
+            response=SimpleNamespace(
+                defer=AsyncMock(),
+                edit_message=AsyncMock(),
+                send_message=AsyncMock(),
+            ),
+            edit_original_response=AsyncMock(),
         )
         await view.approve.callback(interaction)
         self.assertEqual(len(self.store.catalog), 1)
+        interaction.response.defer.assert_awaited_once()
+        interaction.edit_original_response.assert_awaited_once()
+        edited = interaction.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("HTMLを登録しました", edited)
 
 
 class HtmlPreviewAndThumbnailTests(unittest.IsolatedAsyncioTestCase):
@@ -233,6 +242,65 @@ class HtmlPreviewAndThumbnailTests(unittest.IsolatedAsyncioTestCase):
 
         await _wait_page_ready(fake_command, wait=0.2)
         self.assertGreaterEqual(calls, 2)
+
+    async def test_publish_async_waits_for_thumbnail_before_returning(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from jllm_plugins.html_library.store import HtmlConfig, HtmlStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = SimpleNamespace(legacy_path=lambda p: root / p)
+            cfg = HtmlConfig(
+                require_approval=False,
+                thumbnail=True,
+                chrome="/usr/bin/chromium",
+                html_dir="html",
+                pending_dir="pending",
+                catalog_file="catalog.json",
+                viewer_base_url="https://html.example.test",
+                dashboard_url="https://html.example.test",
+            )
+            store = HtmlStore(storage, cfg)
+            author = SimpleNamespace(id="u2", display_name="Bob")
+            req_id = store.register(
+                b"<title>Sunset 3D</title><body>OK</body>",
+                "sunset.html",
+                author,
+            )
+
+            async def fake_capture(chrome, source, out):
+                out.write_bytes(b"rendered-thumb")
+                return True
+
+            with patch(
+                "jllm_plugins.html_library.store.capture_thumbnail",
+                new=AsyncMock(side_effect=fake_capture),
+            ) as mocked_capture:
+                msg = await store.publish_async(req_id)
+
+            mocked_capture.assert_awaited_once()
+            site_id = store.catalog[0]["site_id"]
+            self.assertIn(f"https://html.example.test/users/u2/{site_id}/", msg)
+            self.assertTrue((root / "html" / "users" / "u2" / site_id / "thumb.jpg").is_file())
+            dash = (root / "html" / "index.html").read_text(encoding="utf-8")
+            self.assertIn(f"/users/u2/{site_id}/thumb.jpg", dash)
+
+            req_fail = store.register(b"<title>Retry Page</title>", "retry.html", author)
+            with (
+                patch(
+                    "jllm_plugins.html_library.store.capture_thumbnail",
+                    new=AsyncMock(side_effect=TimeoutError),
+                ),
+                patch.object(store, "schedule_thumbnails", new=MagicMock()) as sched,
+            ):
+                msg_fail = await store.publish_async(req_fail, thumbnail_wait=0.1)
+
+            self.assertIn("HTMLを登録しました", msg_fail)
+            sched.assert_called_once()
 
 
 if __name__ == "__main__":

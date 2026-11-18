@@ -4,6 +4,7 @@ import discord
 class MediaApprovalView(discord.ui.View):
     approval_kind = "media"
     registration_label = "メディア"
+    defer_on_approve = False
 
     def __init__(self, cog, request_id: str):
         super().__init__(timeout=600)
@@ -35,9 +36,20 @@ class MediaApprovalView(discord.ui.View):
             await interaction.response.send_message("この申請は処理済みです。", ephemeral=True)
             return
         self.finished = True
+        deferred = False
+        if (
+            self.defer_on_approve
+            and hasattr(interaction.response, "defer")
+            and hasattr(interaction, "edit_original_response")
+        ):
+            await interaction.response.defer()
+            deferred = True
         result = await getattr(self.cog, f"_approve_{self.approval_kind}")(self.request_id)
         self._disable()
-        await interaction.response.edit_message(content=result, view=self)
+        if deferred:
+            await interaction.edit_original_response(content=result, view=self)
+        else:
+            await interaction.response.edit_message(content=result, view=self)
 
     async def on_timeout(self):
         if self.finished:
@@ -67,6 +79,7 @@ class MediaApprovalView(discord.ui.View):
 class HtmlApprovalView(MediaApprovalView):
     approval_kind = "html"
     registration_label = "HTML"
+    defer_on_approve = True
 
     async def _authorized(self, interaction: discord.Interaction) -> bool:
         approver = self.cog.html_store.config.approver_id if self.cog.html_store is not None else 0

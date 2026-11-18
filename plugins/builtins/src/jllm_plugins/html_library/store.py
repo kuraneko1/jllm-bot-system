@@ -1158,13 +1158,13 @@ class HtmlStore:
         }
         return request_id
 
-    def publish(self, request_id: str) -> str:
+    def _publish_record(self, request_id: str) -> tuple[str, dict | None]:
         request = self.pending.pop(request_id, None)
         if request is None:
-            return "このHTML登録申請は期限切れです。"
+            return "このHTML登録申請は期限切れです。", None
         source = Path(request["path"])
         if not source.is_file():
-            return "登録用HTMLが見つかりません。"
+            return "登録用HTMLが見つかりません。", None
         site_id = request["site_id"]
         user_id = request["user_id"]
         target_dir = self.html_dir / "users" / user_id / site_id
@@ -1192,8 +1192,38 @@ class HtmlStore:
         self.catalog.append(record)
         self.save_catalog()
         self.rebuild_dashboards()
-        self.schedule_thumbnails([record])
-        return f"HTMLを登録しました。\n{self.config.viewer_base_url}/users/{user_id}/{site_id}/"
+        return (
+            f"HTMLを登録しました。\n{self.config.viewer_base_url}/users/{user_id}/{site_id}/",
+            record,
+        )
+
+    def publish(self, request_id: str) -> str:
+        message, record = self._publish_record(request_id)
+        if record is not None:
+            self.schedule_thumbnails([record])
+        return message
+
+    async def publish_async(self, request_id: str, thumbnail_wait: float = 35.0) -> str:
+        """HTML を公開し、リンクプレビュー用のサムネイル撮影完了を待ってから URL を返す。"""
+
+        message, record = await asyncio.to_thread(self._publish_record, request_id)
+        if record is None or not self.config.thumbnail or not self.chrome:
+            return message
+        ok = False
+        try:
+            ok = await asyncio.wait_for(self.make_thumbnail(record), thumbnail_wait)
+        except TimeoutError:
+            logger.warning(
+                "サムネイル撮影がタイムアウトしたため再試行に回します: %s",
+                record.get("site_id"),
+            )
+        except Exception:
+            logger.exception("サムネイル撮影に失敗: %s", record.get("site_id"))
+        if ok:
+            await asyncio.to_thread(self.rebuild_dashboards)
+        else:
+            self.schedule_thumbnails([record])
+        return message
 
     def reject(self, request_id: str) -> str:
         request = self.pending.pop(request_id, None)

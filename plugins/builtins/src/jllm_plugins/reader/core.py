@@ -1909,11 +1909,17 @@ class ReaderCog(commands.Cog):
     def _viewer_wrapper_html(self, title, user_id, site_id, data):
         return self.html_store.viewer_wrapper_html(title, user_id, site_id, data)
 
-    async def _publish_html(self, request_id: str) -> str:
+    async def _publish_html_and_wait(self, request_id: str) -> str:
+        publish_async = getattr(self.html_store, "publish_async", None)
+        if publish_async is not None:
+            return await publish_async(request_id)
         return self.html_store.publish(request_id)
 
+    async def _publish_html(self, request_id: str) -> str:
+        return await self._publish_html_and_wait(request_id)
+
     async def _approve_html(self, request_id: str) -> str:
-        return self.html_store.publish(request_id)
+        return await self._publish_html_and_wait(request_id)
 
     async def _reject_html(self, request_id: str) -> str:
         return self.html_store.reject(request_id)
