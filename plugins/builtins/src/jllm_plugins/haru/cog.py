@@ -17,6 +17,7 @@ from jllm_plugins.playback.player import install_send_stats
 
 from .bridge import HaruConversationSession
 from .client import HaruApiClient, HaruApiError, HaruConfig
+from .control import NoHaruController
 from .personas import HaruPersonaStore, build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class HaruCog(commands.Cog):
         store: HaruPersonaStore,
         client: HaruApiClient,
         config: HaruConfig | None = None,
+        controller=None,
         reader=None,
         restrictions=None,
     ):
@@ -45,6 +47,7 @@ class HaruCog(commands.Cog):
         self.store = store
         self.client = client
         self.config = config or HaruConfig()
+        self.controller = controller or NoHaruController()
         self.reader = reader
         self.restrictions = restrictions
         self.sessions: dict[int, HaruConversationSession] = {}
@@ -469,8 +472,28 @@ class HaruCog(commands.Cog):
             lines.insert(0, "会話中: なし")
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
-    async def close_all(self) -> None:
+    async def close_sessions(self) -> None:
         for guild_id in list(self.sessions):
             with contextlib.suppress(Exception):
                 await self.stop_guild(guild_id, keep_voice_if_reader=True)
+
+    async def start_server(self) -> dict:
+        return await self.controller.start()
+
+    async def stop_server(self) -> dict:
+        await self.close_sessions()
+        return await self.controller.stop()
+
+    async def server_status(self) -> dict:
+        if getattr(self.controller, "configured", False):
+            return await self.controller.status()
+        return {
+            "configured": False,
+            "active": None,
+            "healthy": await self.client.ready(),
+            "vram": None,
+        }
+
+    async def close_all(self) -> None:
+        await self.close_sessions()
         await self.client.close()

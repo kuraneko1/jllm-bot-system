@@ -81,6 +81,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests,
         require_existing_passkey: bool = False,
         effects=None,
         haru=None,
+        vram=None,
         config=None,
     ):
         self.config = config or DashboardConfig()
@@ -89,6 +90,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests,
         self.tts = tts
         self.reader = reader
         self.haru = haru
+        self.vram = vram
         self.sessions = sessions
         self.webchat_client = webchat_client
         self._webchat_hits: dict[str, list[float]] = {}
@@ -207,6 +209,10 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests,
                 web.delete("/api/voice-library", self._protect(self._delete_voice)),
                 web.post("/api/generate", self._protect(self._generate)),
                 web.get("/api/haru/state", self._protect(self._haru_state)),
+                web.post("/api/haru/server/start", self._protect(self._haru_server_start)),
+                web.post("/api/haru/server/stop", self._protect(self._haru_server_stop)),
+                web.post("/api/vram/free", self._protect(self._vram_free)),
+                web.post("/api/vram/restore", self._protect(self._vram_restore)),
                 web.post("/api/haru/personas", self._protect(self._haru_create_persona)),
                 web.put("/api/haru/personas/{persona_id}", self._protect(self._haru_update_persona)),
                 web.delete("/api/haru/personas/{persona_id}", self._protect(self._haru_delete_persona)),

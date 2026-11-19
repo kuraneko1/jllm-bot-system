@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Haru 会話の話せるひと管理・リアルタイムフォーカス制御（WebUI 管理者向け）。"""
+"""Haru 会話の話せるひと管理・リアルタイムフォーカス・サーバ起動/メモリ開放制御。"""
 
 from __future__ import annotations
 
@@ -10,11 +10,13 @@ from pathlib import Path
 from aiohttp import web
 
 from jllm_plugins.haru.client import HaruApiError
+from jllm_plugins.haru.control import HaruControlError
 from jllm_plugins.haru.personas import (
     HARU_VOICE_EXTENSIONS,
     MAX_HARU_VOICE_BYTES,
     normalize_haru_voice,
 )
+from jllm_plugins.vram_control.service import VramControlError, vram_summary
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +29,134 @@ def _serialize_persona(item: dict) -> dict:
 
 
 class HaruAdmin:
-    async def _haru_state(self, request: web.Request) -> web.Response:
+    async def _collect_haru_state(self) -> dict:
         if self.haru is None:
-            return web.json_response(
-                {"supported": False, "server_ready": False, "personas": [], "guilds": []}
-            )
+            vram_data = None
+            vram_configured = bool(getattr(self.vram, "configured", False))
+            if vram_configured:
+                try:
+                    vram_data = (await self.vram.status()).get("vram")
+                except VramControlError:
+                    vram_data = None
+            return {
+                "supported": False,
+                "server_ready": False,
+                "server_active": None,
+                "control_configured": False,
+                "vram_configured": vram_configured,
+                "vram": vram_data,
+                "personas": [],
+                "guilds": [],
+            }
+
         snap = await self.haru.status_snapshot()
+        ctrl_configured = bool(getattr(getattr(self.haru, "controller", None), "configured", False))
+        vram_configured = bool(getattr(self.vram, "configured", False))
+        server_active = None
+        vram_data = None
+
+        if ctrl_configured:
+            try:
+                ctrl_status = await self.haru.server_status()
+                server_active = ctrl_status.get("active")
+                vram_data = ctrl_status.get("vram")
+                if "healthy" in ctrl_status:
+                    snap["server_ready"] = bool(ctrl_status["healthy"])
+            except HaruControlError:
+                pass
+        if vram_data is None and vram_configured:
+            try:
+                vram_data = (await self.vram.status()).get("vram")
+            except VramControlError:
+                pass
+
+        return {
+            "supported": True,
+            "server_ready": bool(snap.get("server_ready")),
+            "server_active": server_active,
+            "control_configured": ctrl_configured,
+            "vram_configured": vram_configured,
+            "vram": vram_data,
+            "personas": [_serialize_persona(p) for p in snap.get("personas", [])],
+            "guilds": snap.get("guilds", []),
+        }
+
+    async def _haru_state(self, request: web.Request) -> web.Response:
+        return web.json_response(await self._collect_haru_state())
+
+    async def _haru_server_start(self, request: web.Request) -> web.Response:
+        if self.haru is None:
+            return self._json_error("Haru プラグインが無効です。", 400)
+        try:
+            result = await self.haru.start_server()
+        except HaruControlError as exc:
+            return self._json_error(str(exc), 400)
+        except Exception:
+            logger.exception("Haru サーバの起動に失敗")
+            return self._json_error("Haru サーバの起動に失敗しました。", 500)
+        state = await self._collect_haru_state()
         return web.json_response(
             {
-                "supported": True,
-                "server_ready": bool(snap.get("server_ready")),
-                "personas": [_serialize_persona(p) for p in snap.get("personas", [])],
-                "guilds": snap.get("guilds", []),
+                "ok": True,
+                "result": result,
+                "vram_text": vram_summary(result),
+                "state": state,
+            }
+        )
+
+    async def _haru_server_stop(self, request: web.Request) -> web.Response:
+        if self.haru is None:
+            return self._json_error("Haru プラグインが無効です。", 400)
+        try:
+            result = await self.haru.stop_server()
+        except HaruControlError as exc:
+            return self._json_error(str(exc), 400)
+        except Exception:
+            logger.exception("Haru サーバの停止に失敗")
+            return self._json_error("Haru サーバの停止に失敗しました。", 500)
+        state = await self._collect_haru_state()
+        return web.json_response(
+            {
+                "ok": True,
+                "result": result,
+                "vram_text": vram_summary(result),
+                "state": state,
+            }
+        )
+
+    async def _vram_free(self, request: web.Request) -> web.Response:
+        if not getattr(self.vram, "configured", False):
+            return self._json_error("VRAM開放の設定がありません（VRAM_CONTROL_*）。", 400)
+        if self.haru is not None:
+            await self.haru.close_sessions()
+        try:
+            result = await self.vram.free()
+        except VramControlError as exc:
+            return self._json_error(str(exc), 400)
+        state = await self._collect_haru_state()
+        return web.json_response(
+            {
+                "ok": True,
+                "result": result,
+                "vram_text": vram_summary(result),
+                "state": state,
+            }
+        )
+
+    async def _vram_restore(self, request: web.Request) -> web.Response:
+        if not getattr(self.vram, "configured", False):
+            return self._json_error("VRAM復元の設定がありません（VRAM_CONTROL_*）。", 400)
+        try:
+            result = await self.vram.restore()
+        except VramControlError as exc:
+            return self._json_error(str(exc), 400)
+        state = await self._collect_haru_state()
+        return web.json_response(
+            {
+                "ok": True,
+                "result": result,
+                "vram_text": vram_summary(result),
+                "state": state,
             }
         )
 

@@ -32,6 +32,12 @@ from jllm_plugins.haru.bridge import (
 )
 from jllm_plugins.haru.client import HaruApiClient, HaruConfig
 from jllm_plugins.haru.cog import HaruCog
+from jllm_plugins.haru.control import (
+    HaruControlError,
+    HaruController,
+    NoHaruController,
+    build_haru_controller,
+)
 from jllm_plugins.haru.personas import HaruPersonaStore, build_system_prompt, normalize_haru_voice
 from jllm_plugins.playback.mixer import FRAME_BYTES, GuildAudioMixer
 
@@ -390,6 +396,72 @@ class HaruCogAndDashboardTests(unittest.IsolatedAsyncioTestCase):
                 deleted = await client.delete(f"/api/haru/personas/{pid}")
                 self.assertEqual(deleted.status, 200)
                 self.assertEqual(store.list_personas(), [])
+
+                # Haru server start/stop + VRAM free/restore endpoints
+                no_ctrl = build_haru_controller({})
+                self.assertIsInstance(no_ctrl, NoHaruController)
+                with self.assertRaises(HaruControlError):
+                    await no_ctrl.start()
+
+                fake_ctrl = SimpleNamespace(
+                    configured=True,
+                    start=AsyncMock(
+                        return_value={
+                            "ok": True,
+                            "active": True,
+                            "healthy": True,
+                            "vram": {"used_mib": 9300, "free_mib": 2982, "total_mib": 12282},
+                        }
+                    ),
+                    stop=AsyncMock(
+                        return_value={
+                            "ok": True,
+                            "active": False,
+                            "healthy": False,
+                            "vram": {"used_mib": 400, "free_mib": 11882, "total_mib": 12282},
+                        }
+                    ),
+                    status=AsyncMock(
+                        return_value={
+                            "ok": True,
+                            "active": True,
+                            "healthy": True,
+                            "vram": {"used_mib": 9300, "free_mib": 2982, "total_mib": 12282},
+                        }
+                    ),
+                )
+                cog.controller = fake_ctrl
+                dashboard.vram = SimpleNamespace(
+                    configured=True,
+                    status=AsyncMock(
+                        return_value={"ok": True, "vram": {"used_mib": 400, "free_mib": 11882, "total_mib": 12282}}
+                    ),
+                    free=AsyncMock(
+                        return_value={"ok": True, "vram": {"used_mib": 300, "free_mib": 11982, "total_mib": 12282}}
+                    ),
+                    restore=AsyncMock(
+                        return_value={"ok": True, "vram": {"used_mib": 4500, "free_mib": 7782, "total_mib": 12282}}
+                    ),
+                )
+                start_resp = await client.post("/api/haru/server/start", json={})
+                self.assertEqual(start_resp.status, 200)
+                self.assertTrue((await start_resp.json())["state"]["server_active"])
+
+                stop_resp = await client.post("/api/haru/server/stop", json={})
+                self.assertEqual(stop_resp.status, 200)
+                fake_ctrl.stop.assert_awaited_once()
+
+                free_resp = await client.post("/api/vram/free", json={})
+                self.assertEqual(free_resp.status, 200)
+                self.assertIn("11982MiB", (await free_resp.json())["vram_text"])
+
+                restore_resp = await client.post("/api/vram/restore", json={})
+                self.assertEqual(restore_resp.status, 200)
+                self.assertIn("4500MiB", (await restore_resp.json())["vram_text"])
+
+                real_ctrl = HaruController("ryu@192.168.0.22", "/tmp/k", "/tmp/kh")
+                with self.assertRaises(HaruControlError):
+                    await real_ctrl.run("invalid")
             finally:
                 await client.close()
                 await api_client.close()

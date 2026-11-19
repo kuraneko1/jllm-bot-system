@@ -2,7 +2,6 @@ const GENDER_TEXT = { "": "指定なし", female: "女性", male: "男性" };
 const BACKCHANNEL_TEXT = { "": "指定なし", low: "少なめ", mid: "普通", high: "多め" };
 
 let editingId = null;
-let lastState = null;
 
 function renderGuildRows(panel, data, ctx, refresh) {
   const box = panel.querySelector("#haruGuilds");
@@ -245,10 +244,25 @@ export async function mount(panel, ctx) {
     <article class="card" style="grid-column:1 / -1">
       <div class="card-head">
         <div>
-          <h2>Haru リアルタイム会話状態 &amp; フォーカス</h2>
+          <h2>Haru サーバ制御 &amp; 会話フォーカス</h2>
           <p id="haruServerBadge" class="subtle">確認中…</p>
         </div>
-        <button id="haruRefresh" class="button secondary small" type="button">更新</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button id="haruServerStart" class="button small" type="button">Haru 起動</button>
+          <button id="haruServerStop" class="button secondary small" type="button">Haru 停止（メモリ開放）</button>
+          <button id="haruVramFree" class="button danger small" type="button">GPU VRAM 全開放</button>
+          <button id="haruVramRestore" class="button secondary small" type="button">読み上げ復元</button>
+          <button id="haruRefresh" class="button secondary small" type="button">更新</button>
+        </div>
+      </div>
+      <div id="haruVramRow" style="display:none;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+          <span id="haruVramLabel" class="subtle"></span>
+          <span id="haruVramPct" class="subtle"></span>
+        </div>
+        <div style="height:6px;border-radius:999px;background:var(--line);overflow:hidden">
+          <div id="haruVramBar" style="height:100%;width:0%;background:var(--accent);transition:width .25s ease"></div>
+        </div>
       </div>
       <div id="haruStateNotice" class="notice" role="status"></div>
       <div id="haruGuilds"></div>
@@ -335,29 +349,113 @@ export async function mount(panel, ctx) {
     </article>
   `;
 
+  let currentData = null;
+
+  function syncPowerButtons(busy = false) {
+    const ctrlReady = !busy && Boolean(currentData?.control_configured);
+    const vramReady = !busy && Boolean(currentData?.vram_configured);
+    panel.querySelector("#haruServerStart").disabled = !ctrlReady;
+    panel.querySelector("#haruServerStop").disabled = !ctrlReady;
+    panel.querySelector("#haruVramFree").disabled = !vramReady;
+    panel.querySelector("#haruVramRestore").disabled = !vramReady;
+    panel.querySelector("#haruRefresh").disabled = busy;
+  }
+
+  function applyState(data) {
+    currentData = data;
+    const badge = panel.querySelector("#haruServerBadge");
+    const countBadge = document.querySelector("#haruTabCount");
+    if (countBadge) countBadge.textContent = `(${(data.personas || []).length})`;
+    if (!data.supported) {
+      badge.textContent = "Haru プラグインが無効です";
+    } else {
+      const serverState = data.server_ready
+        ? "起動中 (Ready)"
+        : data.server_active
+          ? "起動中 (モデル読込中)"
+          : "停止中 / オフライン";
+      badge.textContent = `Haru サーバ: ${serverState} ・ 登録 ${(data.personas || []).length} 人`;
+    }
+
+    const vramRow = panel.querySelector("#haruVramRow");
+    const vram = data.vram;
+    if (vram && Number.isFinite(Number(vram.total_mib)) && Number(vram.total_mib) > 0) {
+      const used = Number(vram.used_mib || 0);
+      const free = Number(vram.free_mib || 0);
+      const total = Number(vram.total_mib || 1);
+      const pct = Math.min(100, Math.max(0, Math.round((used / total) * 100)));
+      panel.querySelector("#haruVramLabel").textContent =
+        `GPU VRAM: 使用 ${used} MiB / 空き ${free} MiB（全 ${total} MiB）`;
+      panel.querySelector("#haruVramPct").textContent = `${pct}%`;
+      panel.querySelector("#haruVramBar").style.width = `${pct}%`;
+      vramRow.style.display = "block";
+    } else {
+      vramRow.style.display = "none";
+    }
+
+    syncPowerButtons(false);
+    renderGuildRows(panel, data, ctx, refresh);
+    renderPersonas(panel, data, ctx, refresh);
+  }
+
   async function refresh() {
     if (!ctx.isAuthenticated()) return;
     try {
       const data = await (await ctx.api("/api/haru/state")).json();
-      lastState = data;
-      const badge = panel.querySelector("#haruServerBadge");
-      const countBadge = document.querySelector("#haruTabCount");
-      if (countBadge) countBadge.textContent = `(${(data.personas || []).length})`;
-      if (!data.supported) {
-        badge.textContent = "Haru プラグインが無効です";
-      } else {
-        badge.textContent = data.server_ready
-          ? `Haru サーバ: オンライン ・ 登録 ${(data.personas || []).length} 人`
-          : `Haru サーバ: オフライン / 準備中 ・ 登録 ${(data.personas || []).length} 人`;
-      }
-      renderGuildRows(panel, data, ctx, refresh);
-      renderPersonas(panel, data, ctx, refresh);
+      applyState(data);
     } catch (err) {
       ctx.notice("#haruStateNotice", err.message);
     }
   }
 
   panel._haruRefresh = refresh;
+
+  async function runPowerAction(url, waitMsg, doneMsg) {
+    ctx.clearNotice("#haruStateNotice");
+    syncPowerButtons(true);
+    ctx.notice("#haruStateNotice", waitMsg, "info");
+    try {
+      const res = await (await ctx.api(url, { method: "POST", body: "{}" })).json();
+      if (res.state) applyState(res.state);
+      else await refresh();
+      const extra = res.vram_text ? `（${res.vram_text}）` : "";
+      ctx.notice("#haruStateNotice", `${doneMsg}${extra}`, "success");
+    } catch (err) {
+      ctx.notice("#haruStateNotice", err.message);
+      await refresh();
+    } finally {
+      syncPowerButtons(false);
+    }
+  }
+
+  panel.querySelector("#haruServerStart").addEventListener("click", () =>
+    runPowerAction(
+      "/api/haru/server/start",
+      "Haru サーバを起動しています（モデル読込に1分ほどかかる場合があります）…",
+      "Haru サーバを起動しました。",
+    )
+  );
+  panel.querySelector("#haruServerStop").addEventListener("click", () =>
+    runPowerAction(
+      "/api/haru/server/stop",
+      "Haru サーバを停止して GPU メモリを開放しています…",
+      "Haru サーバを停止し、メモリを開放しました。",
+    )
+  );
+  panel.querySelector("#haruVramFree").addEventListener("click", () =>
+    runPowerAction(
+      "/api/vram/free",
+      "GPU サービスを停止して VRAM を全開放しています…",
+      "GPU VRAM を開放しました。",
+    )
+  );
+  panel.querySelector("#haruVramRestore").addEventListener("click", () =>
+    runPowerAction(
+      "/api/vram/restore",
+      "通常の読み上げサーバ（Irodori）を起動し直しています…",
+      "読み上げサーバを復元しました。",
+    )
+  );
 
   panel.querySelector("#haruRefresh").addEventListener("click", () => {
     ctx.clearNotice("#haruStateNotice");

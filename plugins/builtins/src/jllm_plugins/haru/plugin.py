@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .client import HaruApiClient, HaruConfig
 from .cog import HaruCog
+from .control import build_haru_controller
 from .personas import HaruPersonaStore
 
 
@@ -25,11 +26,13 @@ class Plugin:
             storage.legacy_path(config.focus_path),
         )
         client = HaruApiClient(config.url, timeout=config.connect_timeout_seconds)
+        controller = build_haru_controller()
         self.cog = HaruCog(
             ctx.dependencies["discord.gateway"].bot,
             store=store,
             client=client,
             config=config,
+            controller=controller,
             reader=ctx.dependencies.get("feature.reader"),
             restrictions=ctx.dependencies.get("policy.restrictions"),
         )
