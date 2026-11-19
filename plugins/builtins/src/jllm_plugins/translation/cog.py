@@ -1214,6 +1214,8 @@ class TranslationCog(commands.Cog):
         if self.kitasan is not None and self.kitasan.matches_trigger(message.content):
             await self.kitasan.handle(message)
             return
+        if self._is_registration_message(message):
+            return
         allowed_here = (
             message.channel.id in self.config.allowed_channel_ids
             or message.channel.id in self.config.talk_open_channels
@@ -1367,6 +1369,27 @@ class TranslationCog(commands.Cog):
         partner = self.talk_partner(channel_id)
         return {partner} if partner else set()
 
+    def _is_registration_message(self, message) -> bool:
+        """@Bot メンション＋HTML/GIF添付（登録機能向け）は会話・翻訳の対象にしない。"""
+        bot_user = getattr(self.bot, "user", None)
+        bot_id = getattr(bot_user, "id", None)
+        if bot_id is None:
+            return False
+        mentioned = any(
+            getattr(user, "id", None) == bot_id for user in getattr(message, "mentions", ())
+        )
+        if not mentioned:
+            return False
+        for attachment in getattr(message, "attachments", ()):
+            filename = (getattr(attachment, "filename", "") or "").lower()
+            ctype = (getattr(attachment, "content_type", "") or "").lower().split(";", 1)[0].strip()
+            if filename.endswith((".html", ".htm", ".gif")) or ctype in (
+                "text/html",
+                "image/gif",
+            ):
+                return True
+        return False
+
     async def talk_invocation(self, message):
         """会話モードの呼び出しかどうかと、モデルへ渡す本文を返す。
 
@@ -1383,6 +1406,8 @@ class TranslationCog(commands.Cog):
         mentioned = any(user.id == bot_id for user in getattr(message, "mentions", []))
         text = message.clean_content
         tail = text.rstrip()
+        if self._is_registration_message(message):
+            return None, text, None
 
         # 返信先が miq の生成した画像なら、内容によらず返事をしない
         parent = await referenced_message(message)

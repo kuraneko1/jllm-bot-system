@@ -585,3 +585,46 @@ class TranslationClientTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await client.close()
                 await runner.cleanup()
+
+
+class TalkRegistrationSkipTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mention_with_html_or_gif_attachment_is_skipped_by_translation_cog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bot = SimpleNamespace(user=SimpleNamespace(id=999))
+            cog = TranslationCog(
+                bot,
+                TranslationSettings(root / "settings.json"),
+                SimpleNamespace(translate=AsyncMock(), close=AsyncMock()),
+                SimpleNamespace(set_enabled=AsyncMock()),
+                TalkLog(None, None),
+                SessionStore(root / "sessions"),
+            )
+            cog.backend_ready = True
+            cog.config.talk_any_channel = True
+            cog.enqueue_talk = AsyncMock(return_value=True)
+            try:
+                guild = SimpleNamespace(id=4)
+                author = SimpleNamespace(id=2, bot=False, display_name="User")
+
+                def make_msg(filename: str, ctype: str, content: str = "<@999>"):
+                    return SimpleNamespace(
+                        guild=guild,
+                        channel=SimpleNamespace(id=9999),
+                        author=author,
+                        webhook_id=None,
+                        content=content,
+                        clean_content=content,
+                        mentions=[bot.user],
+                        attachments=[SimpleNamespace(filename=filename, content_type=ctype)],
+                        reference=None,
+                    )
+
+                await cog.on_message(make_msg("app.html", "text/html; charset=utf-8"))
+                await cog.on_message(make_msg("anim.gif", "image/gif", "<@999> hello"))
+                cog.enqueue_talk.assert_not_awaited()
+
+                await cog.on_message(make_msg("pic.png", "image/png", "<@999> これなに？"))
+                cog.enqueue_talk.assert_awaited_once()
+            finally:
+                await cog.cog_unload()
