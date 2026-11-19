@@ -17,6 +17,8 @@ dependencies = [
     "cairocffi>=1.7,<2",
     "pangocffi>=0.13,<1",
     "pangocairocffi>=0.7,<1",
+    "numpy>=2,<3",
+    "sphn>=0.2,<1",
 ]
 
 [tool.uv.sources]
@@ -63,6 +65,7 @@ jllm-tts-contract = { workspace = true }
 "imagegen.anima" = "jllm_plugins.imagegen:plugin.json"
 "feature.miq" = "jllm_plugins.miq:plugin.json"
 "feature.umigame" = "jllm_plugins.umigame:plugin.json"
+"feature.haru" = "jllm_plugins.haru:plugin.json"
 
 [build-system]
 requires = ["hatchling"]

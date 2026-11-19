@@ -140,11 +140,16 @@ class ProductionStartupTests(unittest.IsolatedAsyncioTestCase):
                         failures = {n.id: (n.state, n.reason) for n in plan.nodes.values()
                                     if n.state != "RUNNING"}
                         self.assertEqual(failures, {})
-                        self.assertEqual(len(plan.nodes), 31)
+                        self.assertEqual(len(plan.nodes), 32)
                         gateway = plan.nodes["adapter.discord/main"].services["discord.gateway"]
                         bot = gateway.bot
                         self.assertEqual(set(bot.cogs), {
-                            "ReaderCog", "TranslationCog", "MiqCog", "UmigameCog", "WavRankCog",
+                            "ReaderCog",
+                            "TranslationCog",
+                            "MiqCog",
+                            "UmigameCog",
+                            "WavRankCog",
+                            "HaruCog",
                         })
                         dashboard = plan.nodes["web.dashboard/main"].services["web.dashboard"]
                         self.assertTrue(dashboard.require_existing_passkey)

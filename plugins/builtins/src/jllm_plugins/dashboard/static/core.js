@@ -7,10 +7,10 @@ export const VOL_ICON_SVG =
   '<path d="M10.2 5.2a4 4 0 0 1 0 5.6M12 3.4a6.6 6.6 0 0 1 0 9.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
 
 const TABS = [
-  "sound", "overview", "reading", "gif", "voice",
+  "sound", "overview", "reading", "gif", "voice", "haru",
   "recorder", "playground", "requests", "listen",
 ];
-const ADMIN_TABS = new Set(["voice", "requests"]);
+const ADMIN_TABS = new Set(["voice", "haru", "requests"]);
 
 const state = {
   authenticated: false,
@@ -766,6 +766,7 @@ const TAB_MODULES = {
   reading: "readings.js",
   gif: "gifs.js",
   voice: "voices.js",
+  haru: "haru.js",
   recorder: "recorder.js",
   playground: "playground.js",
   requests: "requests.js",

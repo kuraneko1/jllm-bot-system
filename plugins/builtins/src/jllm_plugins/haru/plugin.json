@@ -1,0 +1,24 @@
+{
+  "id": "feature.haru",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "entry": "jllm_plugins.haru.plugin:Plugin",
+  "provides": [{"capability": "feature.haru", "version": 1}],
+  "requires": [
+    {"capability": "discord.gateway", "version": 1, "cardinality": "one"},
+    {"capability": "storage.local", "version": 1, "cardinality": "one"}
+  ],
+  "optional": [
+    {"capability": "feature.reader", "version": 1, "cardinality": "optional_one"},
+    {"capability": "policy.restrictions", "version": 1, "cardinality": "optional_one"}
+  ],
+  "permissions": [
+    "discord.commands",
+    "discord.messages.send",
+    "voice.play",
+    "network.tts",
+    "storage.own"
+  ],
+  "config_schema": "config.schema.json",
+  "multi_instance": false
+}

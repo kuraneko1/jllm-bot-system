@@ -81,6 +81,10 @@ plugins:
     enabled: true
   feature.umigame:
     enabled: true
+  feature.haru:
+    enabled: true
+    config:
+      url: http://127.0.0.1:8998
   imagegen.anima:
     enabled: true
   feature.reader:

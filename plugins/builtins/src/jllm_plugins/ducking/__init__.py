@@ -18,6 +18,7 @@
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections import deque
@@ -478,6 +479,98 @@ class VolumeDucker:
         self.apply(1.0)
 
 
+class _ListenerHub:
+    """1本の VoiceRecvClient 上で空気読み（ducker）と PCM タップ（Haru 等）を共存させる。"""
+
+    def __init__(self, voice_client):
+        self.voice_client = voice_client
+        self.tracker: SpeechTracker | None = None
+        self.ducker_decode: bool = False
+        self.ducker_on_audio = None
+        self.debug: bool = False
+        self.taps: dict[str, object] = {}
+
+    def needs_decode(self) -> bool:
+        return bool(self.ducker_decode or self.taps)
+
+    def _dispatch_audio(self, user_id, pcm: bytes) -> None:
+        if self.ducker_on_audio is not None:
+            self.ducker_on_audio(user_id, pcm)
+        for tap in tuple(self.taps.values()):
+            try:
+                tap(user_id, pcm)
+            except Exception:  # noqa: BLE001 タップ側の例外で受信ループを止めない
+                logger.debug("PCM タップ処理でエラー", exc_info=True)
+
+    def refresh(self) -> bool:
+        if not VOICE_RECV_AVAILABLE or self.voice_client is None:
+            return False
+        if not isinstance(self.voice_client, voice_recv.VoiceRecvClient):
+            return False
+        active = self.tracker is not None or bool(self.taps)
+        try:
+            listening = bool(self.voice_client.is_listening())
+        except Exception:  # noqa: BLE001
+            listening = False
+        if listening and hasattr(self.voice_client, "stop_listening"):
+            with contextlib.suppress(Exception):
+                self.voice_client.stop_listening()
+        if not active:
+            return True
+        decode = self.needs_decode()
+        if decode:
+            install_dave_support()
+        tracker = self.tracker if self.tracker is not None else SpeechTracker(0.5)
+        sink = make_sink(
+            tracker,
+            decode=decode,
+            on_audio=self._dispatch_audio if decode else None,
+            debug=self.debug,
+        )
+        self.voice_client.listen(sink)
+        return True
+
+
+def _get_hub(voice_client) -> _ListenerHub:
+    hub = getattr(voice_client, "_jllm_listener_hub", None)
+    if hub is None or hub.voice_client is not voice_client:
+        hub = _ListenerHub(voice_client)
+        voice_client._jllm_listener_hub = hub
+    return hub
+
+
+def attach_pcm_tap(voice_client, name: str, callback) -> bool:
+    """VoiceRecvClient から復号済み 48kHz stereo PCM を受け取るタップを追加する。"""
+
+    if not VOICE_RECV_AVAILABLE or voice_client is None:
+        return False
+    if not isinstance(voice_client, voice_recv.VoiceRecvClient):
+        return False
+    hub = _get_hub(voice_client)
+    hub.taps[name] = callback
+    try:
+        return hub.refresh()
+    except Exception:  # noqa: BLE001
+        hub.taps.pop(name, None)
+        logger.warning("PCM タップの接続に失敗しました", exc_info=True)
+        return False
+
+
+def detach_pcm_tap(voice_client, name: str) -> None:
+    """追加した PCM タップを外し、既存の空気読み等があればそのまま維持する。"""
+
+    if voice_client is None:
+        return
+    hub = getattr(voice_client, "_jllm_listener_hub", None)
+    if hub is None:
+        return
+    if name not in hub.taps:
+        return
+    hub.taps.pop(name, None)
+    with contextlib.suppress(Exception):
+        hub.refresh()
+
+
 def build_ducker(
     voice_client,
     apply,
@@ -508,16 +601,18 @@ def build_ducker(
         )
         return None
 
-    if decode:
-        # デコードする経路だけ DAVE（E2EE）の復号と SafeDecoder が要る
-        install_dave_support()
-
     tracker = SpeechTracker(hold_seconds)
-    sink = make_sink(tracker, decode=decode, on_audio=on_audio, debug=debug)
+    hub = _get_hub(voice_client)
+    hub.tracker = tracker
+    hub.ducker_decode = decode
+    hub.ducker_on_audio = on_audio
+    hub.debug = debug
 
     try:
-        voice_client.listen(sink)
+        if not hub.refresh():
+            return None
     except Exception:  # noqa: BLE001 聞けなくても読み上げは続ける
+        hub.tracker = None
         logger.warning("ducking: 発話の受け取りを開始できませんでした", exc_info=True)
         return None
 

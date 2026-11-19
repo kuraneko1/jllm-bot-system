@@ -16,6 +16,7 @@ from urllib.parse import quote, urlsplit
 from aiohttp import web
 
 from .dashboard_dictionaries import MAX_UPLOAD_BYTES, DictionaryAdmin
+from .dashboard_haru import HaruAdmin
 from .dashboard_passkeys import PasskeyAdmin
 from .dashboard_voice_requests import VoiceRequests
 from .dashboard_voices import VoiceAdmin
@@ -62,7 +63,7 @@ SESSION_COOKIE = "reading_dashboard_session"
 SESSION_TTL_SECONDS = 8 * 60 * 60
 
 
-class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests):
+class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests, HaruAdmin):
     def __init__(
         self,
         readings: ReadingDictionary,
@@ -79,6 +80,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         public_url: str | None = None,
         require_existing_passkey: bool = False,
         effects=None,
+        haru=None,
         config=None,
     ):
         self.config = config or DashboardConfig()
@@ -86,6 +88,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
         self.readings = readings
         self.tts = tts
         self.reader = reader
+        self.haru = haru
         self.sessions = sessions
         self.webchat_client = webchat_client
         self._webchat_hits: dict[str, list[float]] = {}
@@ -121,7 +124,7 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
 
         self.app = web.Application(
             middlewares=[self._security_middleware],
-            client_max_size=max(MAX_UPLOAD_BYTES, MAX_VOICE_UPLOAD_BYTES) + 1024 * 1024,
+            client_max_size=max(MAX_UPLOAD_BYTES, MAX_VOICE_UPLOAD_BYTES, 50 * 1024 * 1024) + 1024 * 1024,
         )
         self.app.add_routes(
             [
@@ -203,6 +206,14 @@ class ReadingDashboard(DictionaryAdmin, VoiceAdmin, PasskeyAdmin, VoiceRequests)
                 web.post("/api/voice-library/upload", self._protect(self._add_voice)),
                 web.delete("/api/voice-library", self._protect(self._delete_voice)),
                 web.post("/api/generate", self._protect(self._generate)),
+                web.get("/api/haru/state", self._protect(self._haru_state)),
+                web.post("/api/haru/personas", self._protect(self._haru_create_persona)),
+                web.put("/api/haru/personas/{persona_id}", self._protect(self._haru_update_persona)),
+                web.delete("/api/haru/personas/{persona_id}", self._protect(self._haru_delete_persona)),
+                web.get("/api/haru/personas/{persona_id}/voice", self._protect(self._haru_persona_voice)),
+                web.post("/api/haru/focus", self._protect(self._haru_set_focus)),
+                web.post("/api/haru/switch", self._protect(self._haru_switch_persona)),
+                web.post("/api/haru/stop", self._protect(self._haru_stop_session)),
             ]
         )
 

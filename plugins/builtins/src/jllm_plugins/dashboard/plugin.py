@@ -33,6 +33,7 @@ class Plugin:
             public_url=config.readings_dashboard_url,
             require_existing_passkey=ctx.config.get("require_existing_passkey", False),
             effects=ctx.dependencies.get("speech.effects"),
+            haru=ctx.dependencies.get("feature.haru"),
             config=config,
         )
         ctx.scope.add(self.dashboard.close)

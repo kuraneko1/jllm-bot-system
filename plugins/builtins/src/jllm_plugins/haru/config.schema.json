@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "url": {"type": "string", "default": "http://127.0.0.1:8998"},
+    "personas_path": {"type": "string", "default": "haru_personas.json", "minLength": 1},
+    "voices_dir": {"type": "string", "default": "haru_voices", "minLength": 1},
+    "focus_path": {"type": "string", "default": "haru_focus.json", "minLength": 1},
+    "guidance_scale": {"type": "number", "minimum": 1.0, "maximum": 2.0, "default": 1.5},
+    "output_volume": {"type": "number", "minimum": 0.0, "maximum": 3.0, "default": 1.0},
+    "connect_timeout_seconds": {"type": "number", "minimum": 1.0, "default": 20.0}
+  }
+}

@@ -335,6 +335,21 @@ class SpeechPlayer:
 
         return True
 
+    def _play_source(self, source, *, after) -> None:
+        """再生先を切り替える（Haru 等の常時ミキサー稼働中はそちらへ合成する）。"""
+
+        mixer = getattr(self.voice_client, "_jllm_mixer", None)
+        if mixer is not None and getattr(mixer, "active", False):
+            mixer.play_overlay(source, after=after)
+            return
+        self.voice_client.play(source, after=after)
+
+    def _is_reader_playing(self) -> bool:
+        mixer = getattr(self.voice_client, "_jllm_mixer", None)
+        if mixer is not None and getattr(mixer, "active", False):
+            return bool(mixer.has_overlay())
+        return bool(self.voice_client.is_playing() or self.voice_client.is_paused())
+
     def _stop_playback(self) -> None:
         """再生だけ止める。
 
@@ -342,6 +357,11 @@ class SpeechPlayer:
         再生だけを止められる ``stop_playing()`` を使う。無い接続では従来どおり
         ``stop()`` に落とす。
         """
+
+        mixer = getattr(self.voice_client, "_jllm_mixer", None)
+        if mixer is not None and getattr(mixer, "active", False):
+            mixer.stop_overlay()
+            return
 
         stop_playing = getattr(self.voice_client, "stop_playing", None)
 
@@ -355,7 +375,7 @@ class SpeechPlayer:
         if self.closed:
             return False
 
-        stopped = self.voice_client.is_playing() or self.voice_client.is_paused()
+        stopped = self._is_reader_playing()
 
         self.generation += 1
 
@@ -372,7 +392,7 @@ class SpeechPlayer:
         if self.closed:
             return False
 
-        playing = self.voice_client.is_playing() or self.voice_client.is_paused()
+        playing = self._is_reader_playing()
 
         if playing:
             self._stop_playback()
@@ -1020,7 +1040,7 @@ class SpeechPlayer:
             loop.call_soon_threadsafe(on_finished, error)
 
         try:
-            self.voice_client.play(source, after=after)
+            self._play_source(source, after=after)
             started = True
 
             await asyncio.wait_for(finished, timeout=STREAM_PLAY_TIMEOUT)
@@ -1423,7 +1443,7 @@ class SpeechPlayer:
             )
 
         try:
-            self.voice_client.play(
+            self._play_source(
                 source,
                 after=after,
             )
