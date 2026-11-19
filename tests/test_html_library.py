@@ -125,17 +125,14 @@ class ReaderHtmlTests(ReaderCoreTests):
         interaction = SimpleNamespace(
             user=SimpleNamespace(id=99),
             response=SimpleNamespace(
-                defer=AsyncMock(),
                 edit_message=AsyncMock(),
                 send_message=AsyncMock(),
             ),
-            edit_original_response=AsyncMock(),
         )
         await view.approve.callback(interaction)
         self.assertEqual(len(self.store.catalog), 1)
-        interaction.response.defer.assert_awaited_once()
-        interaction.edit_original_response.assert_awaited_once()
-        edited = interaction.edit_original_response.await_args.kwargs["content"]
+        interaction.response.edit_message.assert_awaited_once()
+        edited = interaction.response.edit_message.await_args.kwargs["content"]
         self.assertIn("HTMLを登録しました", edited)
 
 
@@ -301,6 +298,79 @@ class HtmlPreviewAndThumbnailTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertIn("HTMLを登録しました", msg_fail)
             sched.assert_called_once()
+
+    async def test_immediate_reply_then_updates_preview_after_thumbnail_capture(self):
+        import asyncio
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+
+        from jllm_plugins.html_library.store import HtmlConfig, HtmlStore
+        from jllm_plugins.reader.core import ReaderCog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = SimpleNamespace(legacy_path=lambda p: root / p)
+            cfg = HtmlConfig(
+                require_approval=False,
+                thumbnail=True,
+                chrome="/usr/bin/chromium",
+                html_dir="html",
+                pending_dir="pending",
+                catalog_file="catalog.json",
+                viewer_base_url="https://html.example.test",
+                dashboard_url="https://html.example.test",
+            )
+            store = HtmlStore(storage, cfg)
+            cog = ReaderCog.__new__(ReaderCog)
+            cog.bot = SimpleNamespace(user=object())
+            cog.html_store = store
+            cog._is_approver = lambda _uid: False
+
+            gate = asyncio.Event()
+            sent_msg = SimpleNamespace(edit=AsyncMock())
+            attachment = SimpleNamespace(
+                content_type="text/html",
+                filename="instant.html",
+                size=100,
+                read=AsyncMock(return_value=b"<title>Instant Page</title><body>OK</body>"),
+            )
+            call = SimpleNamespace(
+                author=SimpleNamespace(id="u3", display_name="Carol"),
+                mentions=[cog.bot.user],
+                attachments=[attachment],
+                reply=AsyncMock(return_value=sent_msg),
+            )
+
+            async def delayed_capture(chrome, source, out):
+                await gate.wait()
+                out.write_bytes(b"thumb-bytes")
+                return True
+
+            with patch(
+                "jllm_plugins.html_library.store.capture_thumbnail",
+                new=AsyncMock(side_effect=delayed_capture),
+            ):
+                handled = await cog._handle_html_registration(call)
+                self.assertTrue(handled)
+                call.reply.assert_awaited_once()
+                self.assertTrue(call.reply.await_args.kwargs.get("suppress_embeds"))
+                reply_text = call.reply.await_args.args[0]
+                self.assertIn("HTMLを登録しました", reply_text)
+
+                site_id = store.catalog[0]["site_id"]
+                site_index = root / "html" / "users" / "u3" / site_id / "index.html"
+                self.assertNotIn('property="og:image"', site_index.read_text(encoding="utf-8"))
+                sent_msg.edit.assert_not_awaited()
+
+                gate.set()
+                tasks = list(getattr(cog, "_html_preview_tasks", ()))
+                self.assertTrue(tasks)
+                await asyncio.gather(*tasks)
+
+            self.assertIn('property="og:image"', site_index.read_text(encoding="utf-8"))
+            sent_msg.edit.assert_awaited_once_with(content=reply_text, suppress=False)
 
 
 if __name__ == "__main__":

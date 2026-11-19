@@ -4,7 +4,6 @@ import discord
 class MediaApprovalView(discord.ui.View):
     approval_kind = "media"
     registration_label = "メディア"
-    defer_on_approve = False
 
     def __init__(self, cog, request_id: str):
         super().__init__(timeout=600)
@@ -26,6 +25,9 @@ class MediaApprovalView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
+    async def _finish_approve(self, interaction: discord.Interaction, result: str) -> None:
+        await interaction.response.edit_message(content=result, view=self)
+
     @discord.ui.button(
         label="✅ 許可 / 上書き", style=discord.ButtonStyle.success, custom_id="media_approve"
     )
@@ -36,20 +38,9 @@ class MediaApprovalView(discord.ui.View):
             await interaction.response.send_message("この申請は処理済みです。", ephemeral=True)
             return
         self.finished = True
-        deferred = False
-        if (
-            self.defer_on_approve
-            and hasattr(interaction.response, "defer")
-            and hasattr(interaction, "edit_original_response")
-        ):
-            await interaction.response.defer()
-            deferred = True
         result = await getattr(self.cog, f"_approve_{self.approval_kind}")(self.request_id)
         self._disable()
-        if deferred:
-            await interaction.edit_original_response(content=result, view=self)
-        else:
-            await interaction.response.edit_message(content=result, view=self)
+        await self._finish_approve(interaction, result)
 
     async def on_timeout(self):
         if self.finished:
@@ -79,7 +70,25 @@ class MediaApprovalView(discord.ui.View):
 class HtmlApprovalView(MediaApprovalView):
     approval_kind = "html"
     registration_label = "HTML"
-    defer_on_approve = True
+
+    async def _finish_approve(self, interaction: discord.Interaction, result: str) -> None:
+        pop_rec = getattr(self.cog, "_pop_html_thumb_record", None)
+        needs_thumb = getattr(self.cog, "_needs_html_thumbnail", None)
+        record = pop_rec(self.request_id) if callable(pop_rec) else None
+        pending_thumb = bool(callable(needs_thumb) and needs_thumb(record))
+        if pending_thumb:
+            await interaction.response.edit_message(content=result, view=self, suppress_embeds=True)
+            target_msg = getattr(interaction, "message", None)
+            if target_msg is None and hasattr(interaction, "original_response"):
+                try:
+                    target_msg = await interaction.original_response()
+                except Exception:  # noqa: BLE001
+                    target_msg = None
+            refresher = getattr(self.cog, "_schedule_html_preview_refresh", None)
+            if callable(refresher):
+                refresher(target_msg, result, record)
+        else:
+            await interaction.response.edit_message(content=result, view=self)
 
     async def _authorized(self, interaction: discord.Interaction) -> bool:
         approver = self.cog.html_store.config.approver_id if self.cog.html_store is not None else 0

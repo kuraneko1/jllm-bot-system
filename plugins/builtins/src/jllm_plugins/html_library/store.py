@@ -962,6 +962,7 @@ class HtmlStore:
                         record.get("site_id", ""),
                         author=record.get("display_name", "") or record.get("user_id", ""),
                         base_url=base,
+                        has_thumb=self.thumbnail_path(record).is_file(),
                     ),
                 )
         self._write(
@@ -1061,12 +1062,17 @@ class HtmlStore:
         *,
         author: str = "",
         base_url: str = "",
+        has_thumb: bool = True,
     ) -> str:
         safe_title = html_lib.escape(title)
         safe_user = html_lib.escape(user_id, quote=True)
         base = base_url.rstrip("/")
         page_url = f"{base}/users/{user_id}/{site_id}/" if base else ""
-        image_url = f"{base}/users/{user_id}/{site_id}/thumb.jpg" if base else "thumb.jpg"
+        image_url = (
+            (f"{base}/users/{user_id}/{site_id}/thumb.jpg" if base else "thumb.jpg")
+            if has_thumb
+            else ""
+        )
         description = f"登録者: {author}" if author else f"HTMLページ: {title}"
         og_tags = _og_meta(
             title=title,
@@ -1180,6 +1186,7 @@ class HtmlStore:
                 raw,
                 author=request["display_name"] or user_id,
                 base_url=self.config.viewer_base_url,
+                has_thumb=(target_dir / "thumb.jpg").is_file(),
             ),
         )
         record = {
@@ -1197,18 +1204,22 @@ class HtmlStore:
             record,
         )
 
+    def publish_immediate(self, request_id: str) -> tuple[str, dict | None]:
+        """HTML とダッシュボードを即座に公開し、`(返信メッセージ, record)` を返す。"""
+
+        return self._publish_record(request_id)
+
     def publish(self, request_id: str) -> str:
         message, record = self._publish_record(request_id)
         if record is not None:
             self.schedule_thumbnails([record])
         return message
 
-    async def publish_async(self, request_id: str, thumbnail_wait: float = 35.0) -> str:
-        """HTML を公開し、リンクプレビュー用のサムネイル撮影完了を待ってから URL を返す。"""
+    async def capture_and_rebuild(self, record: dict, thumbnail_wait: float = 35.0) -> bool:
+        """1件のサムネイルを撮影し、完了後に OGP を含むダッシュボードを更新する。"""
 
-        message, record = await asyncio.to_thread(self._publish_record, request_id)
-        if record is None or not self.config.thumbnail or not self.chrome:
-            return message
+        if not self.config.thumbnail or not self.chrome:
+            return False
         ok = False
         try:
             ok = await asyncio.wait_for(self.make_thumbnail(record), thumbnail_wait)
@@ -1223,6 +1234,14 @@ class HtmlStore:
             await asyncio.to_thread(self.rebuild_dashboards)
         else:
             self.schedule_thumbnails([record])
+        return ok
+
+    async def publish_async(self, request_id: str, thumbnail_wait: float = 35.0) -> str:
+        """HTML を公開し、リンクプレビュー用のサムネイル撮影完了を待ってから URL を返す。"""
+
+        message, record = await asyncio.to_thread(self._publish_record, request_id)
+        if record is not None:
+            await self.capture_and_rebuild(record, thumbnail_wait=thumbnail_wait)
         return message
 
     def reject(self, request_id: str) -> str:

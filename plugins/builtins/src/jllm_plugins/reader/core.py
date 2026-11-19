@@ -1909,17 +1909,56 @@ class ReaderCog(commands.Cog):
     def _viewer_wrapper_html(self, title, user_id, site_id, data):
         return self.html_store.viewer_wrapper_html(title, user_id, site_id, data)
 
-    async def _publish_html_and_wait(self, request_id: str) -> str:
-        publish_async = getattr(self.html_store, "publish_async", None)
-        if publish_async is not None:
-            return await publish_async(request_id)
+    async def _publish_html_now(self, request_id: str) -> str:
+        publish_immediate = getattr(self.html_store, "publish_immediate", None)
+        if publish_immediate is not None:
+            result, record = await asyncio.to_thread(publish_immediate, request_id)
+            if record is not None:
+                self.__dict__.setdefault("_html_thumb_records", {})[request_id] = record
+            return result
         return self.html_store.publish(request_id)
 
+    def _pop_html_thumb_record(self, request_id: str) -> dict | None:
+        return self.__dict__.setdefault("_html_thumb_records", {}).pop(request_id, None)
+
+    def _needs_html_thumbnail(self, record: dict | None) -> bool:
+        if record is None or self.html_store is None:
+            return False
+        config = getattr(self.html_store, "config", None)
+        return bool(
+            getattr(config, "thumbnail", False)
+            and getattr(self.html_store, "chrome", None)
+            and hasattr(self.html_store, "capture_and_rebuild")
+        )
+
+    def _schedule_html_preview_refresh(
+        self, sent_message, result: str, record: dict | None
+    ) -> None:
+        if sent_message is None or not self._needs_html_thumbnail(record):
+            return
+
+        async def runner():
+            try:
+                await self.html_store.capture_and_rebuild(record)
+            except Exception:
+                logger.exception("HTML サムネイル更新に失敗")
+            edit = getattr(sent_message, "edit", None)
+            if callable(edit):
+                try:
+                    await edit(content=result, suppress=False)
+                except Exception:
+                    logger.debug("HTML メッセージのプレビュー更新に失敗", exc_info=True)
+
+        tasks = self.__dict__.setdefault("_html_preview_tasks", set())
+        task = asyncio.create_task(runner(), name="html-preview-refresh")
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
     async def _publish_html(self, request_id: str) -> str:
-        return await self._publish_html_and_wait(request_id)
+        return await self._publish_html_now(request_id)
 
     async def _approve_html(self, request_id: str) -> str:
-        return await self._publish_html_and_wait(request_id)
+        return await self._publish_html_now(request_id)
 
     async def _reject_html(self, request_id: str) -> str:
         return self.html_store.reject(request_id)
@@ -1989,7 +2028,12 @@ class ReaderCog(commands.Cog):
             return True
         if not config.require_approval or self._is_approver(message.author.id):
             result = await self._publish_html(request_id)
-            await message.reply(result, mention_author=False)
+            record = self._pop_html_thumb_record(request_id)
+            if self._needs_html_thumbnail(record):
+                sent = await message.reply(result, mention_author=False, suppress_embeds=True)
+                self._schedule_html_preview_refresh(sent, result, record)
+            else:
+                await message.reply(result, mention_author=False)
             return True
         view = HtmlApprovalView(self, request_id)
         request = self.pending_html[request_id]
